@@ -178,7 +178,7 @@ if($route==='packaging.create' && $method==='POST'){
  $pid=(int)($body['product_id']??0); $grams=(int)($body['grams']??0); $qty=(int)($body['qty']??0); $batch=trim((string)($body['batch_no']??''));
  $labour=(float)($body['labour_cost']??0); $sealing=(float)($body['sealing_cost']??0); $other=(float)($body['other_cost']??0); $mrp=(float)($body['mrp']??0);
  $pq=$pdo->prepare('SELECT category FROM products WHERE id=? AND active=1');$pq->execute([$pid]);$category=$pq->fetchColumn();
- if(!$category||$qty<=0) out(['ok'=>false,'code'=>'INVALID_PACKAGING'],422);
+ if(!$category||$qty<=0||$mrp<=0) out(['ok'=>false,'code'=>'INVALID_PACKAGING'],422);
  $allowed=$category==='CTC / Black Tea'?[250,500,1000,2000,5000]:[30,50,100,200,250];
  if(!in_array($grams,$allowed,true)) out(['ok'=>false,'code'=>'INVALID_PACK_SIZE'],422);
  $pdo->beginTransaction();
@@ -198,11 +198,41 @@ if($route==='packaging.create' && $method==='POST'){
 
 if($route==='inventory'){
  auth();
- $rows=$pdo->query("SELECT p.name product,p.category,pp.grams pack,pp.mrp,SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) qty FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id JOIN products p ON p.id=pp.product_id WHERE il.location_type='central' GROUP BY il.product_pack_id,p.name,p.category,pp.grams,pp.mrp HAVING ABS(qty)>0.0001 ORDER BY p.category,p.name,pp.grams")->fetchAll();
+ $rows=$pdo->query("SELECT pp.id pack_id,p.name product,p.category,pp.grams pack,pp.mrp,SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) qty FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id JOIN products p ON p.id=pp.product_id WHERE il.location_type='central' GROUP BY il.product_pack_id,p.name,p.category,pp.grams,pp.mrp HAVING ABS(qty)>0.0001 ORDER BY p.category,p.name,pp.grams")->fetchAll();
  $raw=(float)$pdo->query('SELECT COALESCE(SUM(quantity_kg),0) FROM purchase_items')->fetchColumn();
  $produced=(float)$pdo->query("SELECT COALESCE(SUM(output_kg),0) FROM production_batches WHERE qc_status='pass'")->fetchColumn();
  $waste=(float)$pdo->query('SELECT COALESCE(SUM(wastage_kg),0) FROM production_batches')->fetchColumn();
  out(['ok'=>true,'raw_received_kg'=>$raw,'produced_kg'=>$produced,'wastage_kg'=>$waste,'stock'=>$rows]);
+}
+
+if($route==='inventory.franchise'){
+ auth();
+ $fid=(int)($_GET['franchise_id']??0);
+ if($fid<=0) out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);
+ $q=$pdo->prepare("SELECT pp.id pack_id,p.name product,p.category,pp.grams pack,pp.mrp,SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) qty FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id JOIN products p ON p.id=pp.product_id WHERE il.location_type='franchise' AND il.location_id=? GROUP BY il.product_pack_id,p.name,p.category,pp.grams,pp.mrp HAVING qty>0.0001 ORDER BY p.category,p.name,pp.grams");
+ $q->execute([$fid]);
+ out(['ok'=>true,'stock'=>$q->fetchAll()]);
+}
+
+if($route==='inventory.transfer.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','OPERATIONS'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $fid=(int)($body['franchise_id']??0); $packId=(int)($body['product_pack_id']??0); $qty=(float)($body['qty']??0);
+ if($fid<=0||$packId<=0||$qty<=0) out(['ok'=>false,'code'=>'INVALID_TRANSFER'],422);
+ $fq=$pdo->prepare("SELECT id FROM franchises WHERE id=? AND status<>'closed'");$fq->execute([$fid]);if(!$fq->fetchColumn())out(['ok'=>false,'code'=>'FRANCHISE_NOT_FOUND'],404);
+ $sq=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty WHEN movement_type IN('transfer_out','sale','damage') THEN -qty ELSE qty END),0) FROM inventory_ledger WHERE location_type='central' AND product_pack_id=?");
+ $sq->execute([$packId]);$available=(float)$sq->fetchColumn();
+ if($qty>$available+0.00001) out(['ok'=>false,'code'=>'INSUFFICIENT_CENTRAL_STOCK','available'=>$available],422);
+ $pq=$pdo->prepare('SELECT mrp FROM product_packs WHERE id=?');$pq->execute([$packId]);$mrp=(float)$pq->fetchColumn();
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare("INSERT INTO inventory_ledger(location_type,location_id,product_pack_id,movement_type,qty,unit_value,reference_type,reference_id,created_by) VALUES('central',NULL,?,'transfer_out',?,?,'franchise_transfer',?,?)");
+  $ref=time(); $q->execute([$packId,$qty,$mrp,$ref,(int)$u['id']]);
+  $q=$pdo->prepare("INSERT INTO inventory_ledger(location_type,location_id,product_pack_id,movement_type,qty,unit_value,reference_type,reference_id,created_by) VALUES('franchise',?,?,'transfer_in',?,?,'franchise_transfer',?,?)");
+  $q->execute([$fid,$packId,$qty,$mrp,$ref,(int)$u['id']]);
+  $pdo->commit(); audit($pdo,(int)$u['id'],'create','inventory_transfer',(string)$ref,['franchise_id'=>$fid,'pack_id'=>$packId,'qty'=>$qty,'unit_value'=>$mrp]);
+  out(['ok'=>true,'reference'=>$ref],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'TRANSFER_FAILED'],422);}
 }
 
 if($route==='dashboard'){
@@ -253,16 +283,36 @@ if($route==='franchise.create' && $method==='POST'){
 if($route==='sale.create' && $method==='POST'){
  csrf(); $u=auth();
  if(!in_array($u['role'],['OWNER','OPERATIONS','FRANCHISE','CASHIER'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
- $fid=(int)($body['franchise_id']??0); $gross=(float)($body['gross_amount']??0);
- if($gross<=0||$fid<=0) out(['ok'=>false,'code'=>'INVALID_SALE'],422);
+ $fid=(int)($body['franchise_id']??0); $items=$body['items']??[];
+ if($fid<=0||!is_array($items)||count($items)===0) out(['ok'=>false,'code'=>'INVALID_SALE'],422);
  $q=$pdo->prepare('SELECT margin_percent FROM franchises WHERE id=? AND status<>"closed"'); $q->execute([$fid]); $fr=$q->fetch();
  if(!$fr) out(['ok'=>false,'code'=>'FRANCHISE_NOT_FOUND'],404);
- $pct=(float)$fr['margin_percent']; $earned=round($gross*$pct/100,2); $receipt='TSB-'.date('ymdHis').'-'.random_int(100,999);
- $q=$pdo->prepare('INSERT INTO pos_sales(franchise_id,receipt_no,gross_amount,eligible_amount,margin_percent,earned_margin,payment_method,sold_at,created_by) VALUES(?,?,?,?,?,?,?,NOW(),?)');
- $q->execute([$fid,$receipt,$gross,$gross,$pct,$earned,$body['payment_method']??'cash',(int)$u['id']]);
- $id=(string)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','pos_sale',$id,['receipt'=>$receipt,'gross'=>$gross,'margin'=>$pct]);
- out(['ok'=>true,'id'=>$id,'receipt'=>$receipt,'earned_margin'=>$earned],201);
+ $normalized=[];$gross=0.0;
+ foreach($items as $item){
+  $packId=(int)($item['product_pack_id']??0);$qty=(float)($item['qty']??0);
+  if($packId<=0||$qty<=0) out(['ok'=>false,'code'=>'INVALID_SALE_ITEM'],422);
+  $pq=$pdo->prepare('SELECT pp.mrp,p.name,pp.grams FROM product_packs pp JOIN products p ON p.id=pp.product_id WHERE pp.id=? AND pp.active=1');$pq->execute([$packId]);$pack=$pq->fetch();
+  if(!$pack||(float)$pack['mrp']<=0) out(['ok'=>false,'code'=>'PACK_NOT_SELLABLE'],422);
+  $sq=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty WHEN movement_type IN('transfer_out','sale','damage') THEN -qty ELSE qty END),0) FROM inventory_ledger WHERE location_type='franchise' AND location_id=? AND product_pack_id=?");
+  $sq->execute([$fid,$packId]);$available=(float)$sq->fetchColumn();
+  if($qty>$available+0.00001) out(['ok'=>false,'code'=>'INSUFFICIENT_OUTLET_STOCK','product'=>$pack['name'],'available'=>$available],422);
+  $line=round((float)$pack['mrp']*$qty,2);$gross+=$line;$normalized[]=['pack_id'=>$packId,'qty'=>$qty,'price'=>(float)$pack['mrp'],'line'=>$line];
+ }
+ $pct=(float)$fr['margin_percent']; $gross=round($gross,2); $earned=round($gross*$pct/100,2); $receipt='TSB-'.date('ymdHis').'-'.random_int(100,999);
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare('INSERT INTO pos_sales(franchise_id,receipt_no,gross_amount,eligible_amount,margin_percent,earned_margin,payment_method,sold_at,created_by) VALUES(?,?,?,?,?,?,?,NOW(),?)');
+  $q->execute([$fid,$receipt,$gross,$gross,$pct,$earned,$body['payment_method']??'cash',(int)$u['id']]); $saleId=(int)$pdo->lastInsertId();
+  foreach($normalized as $row){
+   $q=$pdo->prepare('INSERT INTO pos_sale_items(pos_sale_id,product_pack_id,qty,unit_price,line_total) VALUES(?,?,?,?,?)');$q->execute([$saleId,$row['pack_id'],$row['qty'],$row['price'],$row['line']]);
+   $q=$pdo->prepare("INSERT INTO inventory_ledger(location_type,location_id,product_pack_id,movement_type,qty,unit_value,reference_type,reference_id,created_by) VALUES('franchise',?,?,'sale',?,?,'pos_sale',?,?)");
+   $q->execute([$fid,$row['pack_id'],$row['qty'],$row['price'],$saleId,(int)$u['id']]);
+  }
+  $pdo->commit(); audit($pdo,(int)$u['id'],'create','pos_sale',(string)$saleId,['receipt'=>$receipt,'gross'=>$gross,'margin'=>$pct,'items'=>count($normalized)]);
+  out(['ok'=>true,'id'=>$saleId,'receipt'=>$receipt,'gross_amount'=>$gross,'earned_margin'=>$earned],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'SALE_CREATE_FAILED'],422);}
 }
+
 if($route==='finance.summary'){
  auth();
  $s=(float)$pdo->query('SELECT COALESCE(SUM(gross_amount),0) FROM pos_sales')->fetchColumn();
