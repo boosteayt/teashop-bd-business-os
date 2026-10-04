@@ -1,5 +1,5 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/teashopc/teashop.bd/
-    - /bin/cp -R deploy/. $DEPLOYPATH
+    - /bin/mkdir -p /home/teashopc/teashop.bd
+    - /bin/cp -R deploy/. /home/teashopc/teashop.bd/
