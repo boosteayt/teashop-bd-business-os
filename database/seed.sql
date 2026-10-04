@@ -1,0 +1,3 @@
+INSERT INTO roles(code,name) VALUES ('OWNER','Founder / Owner / CEO'),('OPERATIONS','Head of Franchise & Retail Operations'),('FINANCE','Finance & Accounts'),('WAREHOUSE','Central Warehouse'),('REGIONAL','Regional Manager'),('FRANCHISE','Franchise Owner'),('CASHIER','POS / Cashier');
+-- Production passwords MUST be generated server-side with a strong password hash. Never store 123456 in production.
+INSERT INTO performance_share_rules(person_key,tier,percent,effective_from) VALUES ('OMAR_FARUK','BASE',15.00,CURDATE()),('OMAR_FARUK','GROWTH',20.00,CURDATE()),('OMAR_FARUK','ELITE',25.00,CURDATE());
