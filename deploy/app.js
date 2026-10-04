@@ -16,7 +16,9 @@ async function api(route,{method='GET',body}={}){
  const headers={'Accept':'application/json'};
  if(body!==undefined)headers['Content-Type']='application/json';
  if(csrfToken&&method!=='GET')headers['X-CSRF-Token']=csrfToken;
- const res=await fetch('/api/index.php?route='+encodeURIComponent(route),{
+ const parts=String(route).split('?'),routeName=parts.shift(),query=parts.join('?');
+ const url='/api/index.php?route='+encodeURIComponent(routeName)+(query?'&'+query:'');
+ const res=await fetch(url,{
   method,headers,credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)
  });
  let data={};try{data=await res.json()}catch{}
