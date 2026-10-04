@@ -30,7 +30,7 @@ echo "Creating database user..."
 "$UAPI" --output=jsonpretty --user="$CPUSER" Mysql create_user name="$DBUSER" password="$DBPASS"
 
 echo "Granting privileges..."
-"$UAPI" --output=jsonpretty --user="$CPUSER" Mysql set_privileges_on_database user="$DBUSER" database="$DB" privileges='ALL PRIVILEGES'
+"$UAPI" --output=jsonpretty --user="$CPUSER" Mysql set_privileges_on_database user="$DBUSER" database="$DB" privileges=ALL%20PRIVILEGES
 
 umask 077
 cat > "$CONFIG" <<PHP
