@@ -8,6 +8,19 @@ FIRSTLOGIN="${ROOT}/teashop-os-first-login.txt"
 DEFAULT_DB="${CPUSER}_tsbos"
 DEFAULT_DBUSER="${CPUSER}_tsbusr"
 
+PHPCLI=""
+for candidate in /opt/cpanel/ea-php82/root/usr/bin/php /opt/cpanel/ea-php83/root/usr/bin/php /opt/alt/php83/usr/bin/php /opt/alt/php82/usr/bin/php; do
+  if [ -x "$candidate" ] && "$candidate" -r 'echo "CLI_OK";' 2>/dev/null | grep -q "CLI_OK"; then
+    PHPCLI="$candidate"
+    break
+  fi
+done
+if [ -z "$PHPCLI" ]; then
+  echo "ERROR: a real PHP CLI binary was not found." >&2
+  exit 1
+fi
+echo "PHP CLI: $PHPCLI"
+
 echo "Tea Shop BD Business OS — existing cPanel MySQL installer"
 read -r -p "Database name [${DEFAULT_DB}]: " DB
 DB="${DB:-$DEFAULT_DB}"
@@ -18,13 +31,13 @@ echo
 if [ -z "$DBPASS" ]; then echo "ERROR: database password cannot be empty." >&2; exit 1; fi
 export TSB_DB="$DB" TSB_DBUSER="$DBUSER" TSB_DBPASS="$DBPASS"
 echo "Testing MySQL connection..."
-php <<'PHPTEST'
+"$PHPCLI" <<'PHPTEST'
 <?php
 $dsn='mysql:host=localhost;dbname='.getenv('TSB_DB').';charset=utf8mb4';
 try { new PDO($dsn,getenv('TSB_DBUSER'),getenv('TSB_DBPASS'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]); echo "DB_CONNECTION_OK\n"; }
 catch(Throwable $e){ fwrite(STDERR,"DB_CONNECTION_FAILED\n"); exit(2); }
 PHPTEST
-TABLES="$(php <<'PHPCOUNT'
+TABLES="$("$PHPCLI" <<'PHPCOUNT'
 <?php
 $pdo=new PDO('mysql:host=localhost;dbname='.getenv('TSB_DB').';charset=utf8mb4',getenv('TSB_DBUSER'),getenv('TSB_DBPASS'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
 echo (int)$pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE()")->fetchColumn();
@@ -50,7 +63,7 @@ mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/seed_c
 echo "Loading 99-SKU tea master..."
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/seed_products.sql"
 echo "Creating first-login users..."
-php <<'PHPBOOT'
+"$PHPCLI" <<'PHPBOOT'
 <?php
 $config=require getenv('HOME').'/teashop-os-config.php';
 $pdo=new PDO($config['dsn'],$config['user'],$config['pass'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
@@ -74,7 +87,7 @@ foreach($users as [$role,$name,$email]){
 file_put_contents(getenv('HOME').'/teashop-os-first-login.txt',$out,LOCK_EX);
 chmod(getenv('HOME').'/teashop-os-first-login.txt',0600);
 PHPBOOT
-php <<'PHPCONFIG'
+"$PHPCLI" <<'PHPCONFIG'
 <?php
 $p=getenv("HOME")."/teashop-os-config.php"; $c=require $p; $c["setup_token"]="";
 file_put_contents($p,"<?php\nreturn ".var_export($c,true).";\n"); chmod($p,0600);
@@ -83,7 +96,7 @@ echo "INSTALL COMPLETE"
 echo "Config file: $CONFIG"
 echo "First-login credentials file: $FIRSTLOGIN"
 echo "Do NOT paste either file into chat."
-php <<'PHPVERIFY'
+"$PHPCLI" <<'PHPVERIFY'
 <?php
 $c=require getenv("HOME")."/teashop-os-config.php";
 $p=new PDO($c["dsn"],$c["user"],$c["pass"],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
