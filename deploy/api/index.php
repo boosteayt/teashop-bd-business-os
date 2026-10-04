@@ -480,4 +480,127 @@ if($route==='settlement.paid' && $method==='POST'){
  out(['ok'=>true]);
 }
 
+
+if($route==='suppliers'){
+ auth();
+ $rows=$pdo->query("SELECT s.id,s.name,s.phone,s.email,s.address,s.active,
+  COALESCE((SELECT SUM(pr.total_amount) FROM purchase_receipts pr WHERE pr.supplier_id=s.id AND pr.status='received'),0) purchases,
+  COALESCE((SELECT SUM(sp.amount) FROM supplier_payments sp WHERE sp.supplier_id=s.id),0) payments
+  FROM suppliers s WHERE s.supplier_type='tea' ORDER BY s.name")->fetchAll();
+ foreach($rows as &$row){$row['balance']=round((float)$row['purchases']-(float)$row['payments'],2);} unset($row);
+ out(['ok'=>true,'suppliers'=>$rows]);
+}
+
+if($route==='supplier.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $name=trim((string)($body['name']??'')); if($name==='') out(['ok'=>false,'code'=>'INVALID_SUPPLIER'],422);
+ $q=$pdo->prepare("INSERT INTO suppliers(supplier_type,name,phone,email,address,active) VALUES('tea',?,?,?,?,1)");
+ try{$q->execute([$name,$body['phone']??null,$body['email']??null,$body['address']??null]);}
+ catch(Throwable $e){out(['ok'=>false,'code'=>'SUPPLIER_CREATE_FAILED'],422);}
+ $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','supplier',(string)$id,['name'=>$name]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='supplier.payment.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $sid=(int)($body['supplier_id']??0); $amount=(float)($body['amount']??0);
+ if($sid<=0||$amount<=0) out(['ok'=>false,'code'=>'INVALID_SUPPLIER_PAYMENT'],422);
+ $q=$pdo->prepare("INSERT INTO supplier_payments(supplier_id,payment_date,amount,payment_method,reference_no,memo,created_by) VALUES(?,CURDATE(),?,?,?,?,?)");
+ $q->execute([$sid,$amount,$body['payment_method']??'bank',$body['reference_no']??null,$body['memo']??null,(int)$u['id']]);
+ $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','supplier_payment',(string)$id,['supplier_id'=>$sid,'amount'=>$amount]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='rawtea'){
+ auth();
+ $rows=$pdo->query("SELECT r.id,r.code,r.name,r.tea_type,r.origin,r.active,
+  COALESCE(SUM(CASE WHEN l.movement_type IN('opening','purchase_in','adjustment_in') THEN l.qty_kg WHEN l.movement_type IN('blend_out','return_out','adjustment_out') THEN -l.qty_kg ELSE 0 END),0) stock_kg,
+  COALESCE((SELECT AVG(pi.unit_rate) FROM purchase_items pi WHERE pi.raw_tea_material_id=r.id AND pi.unit_rate>0),0) avg_rate
+  FROM raw_tea_materials r
+  LEFT JOIN raw_tea_stock_ledger l ON l.raw_tea_material_id=r.id
+  GROUP BY r.id,r.code,r.name,r.tea_type,r.origin,r.active
+  ORDER BY r.name")->fetchAll();
+ out(['ok'=>true,'rawtea'=>$rows]);
+}
+
+if($route==='rawtea.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $name=trim((string)($body['name']??'')); if($name==='') out(['ok'=>false,'code'=>'INVALID_RAW_TEA'],422);
+ $code=trim((string)($body['code']??'')); if($code==='') $code='RAW-'.date('ymdHis').'-'.random_int(10,99);
+ $q=$pdo->prepare("INSERT INTO raw_tea_materials(code,name,tea_type,origin,active) VALUES(?,?,?,?,1)");
+ try{$q->execute([$code,$name,$body['tea_type']??null,$body['origin']??null]);}
+ catch(Throwable $e){out(['ok'=>false,'code'=>'RAW_TEA_CREATE_FAILED'],422);}
+ $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','raw_tea_material',(string)$id,['code'=>$code,'name'=>$name]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='rawtea.purchase.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $sid=(int)($body['supplier_id']??0);$rid=(int)($body['raw_tea_material_id']??0);$kg=(float)($body['kg']??0);$rate=(float)($body['rate']??0);$lot=trim((string)($body['batch_no']??''));
+ if($sid<=0||$rid<=0||$kg<=0||$rate<0) out(['ok'=>false,'code'=>'INVALID_PURCHASE'],422);
+ $sq=$pdo->prepare("SELECT id FROM suppliers WHERE id=? AND supplier_type='tea' AND active=1");$sq->execute([$sid]);if(!$sq->fetchColumn())out(['ok'=>false,'code'=>'SUPPLIER_NOT_FOUND'],404);
+ $rq=$pdo->prepare("SELECT name FROM raw_tea_materials WHERE id=? AND active=1");$rq->execute([$rid]);$rawName=$rq->fetchColumn();if(!$rawName)out(['ok'=>false,'code'=>'RAW_TEA_NOT_FOUND'],404);
+ $pdo->beginTransaction();
+ try{
+  $ref='GRN-'.date('ymdHis').'-'.random_int(100,999);$total=round($kg*$rate,2);
+  $q=$pdo->prepare("INSERT INTO purchase_receipts(supplier_id,reference_no,received_date,status,total_amount,created_by) VALUES(?,?,CURDATE(),'received',?,?)");
+  $q->execute([$sid,$ref,$total,(int)$u['id']]);$pr=(int)$pdo->lastInsertId();
+  $q=$pdo->prepare("INSERT INTO purchase_items(purchase_receipt_id,product_id,raw_tea_material_id,material_name,quantity_kg,unit_rate,batch_no) VALUES(?,NULL,?,?,?,?,?)");
+  $q->execute([$pr,$rid,$rawName,$kg,$rate,$lot?:null]);
+  $q=$pdo->prepare("INSERT INTO raw_tea_stock_ledger(raw_tea_material_id,movement_type,qty_kg,unit_cost,reference_type,reference_id,batch_no,created_by) VALUES(?,'purchase_in',?,?,'purchase_receipt',?,?,?)");
+  $q->execute([$rid,$kg,$rate,$pr,$lot?:null,(int)$u['id']]);
+  $pdo->commit(); audit($pdo,(int)$u['id'],'create','raw_tea_purchase',(string)$pr,['supplier_id'=>$sid,'raw_tea_material_id'=>$rid,'kg'=>$kg,'rate'=>$rate]);
+  out(['ok'=>true,'id'=>$pr,'reference_no'=>$ref,'total_amount'=>$total],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'RAW_TEA_PURCHASE_FAILED'],422);}
+}
+
+if($route==='blends'){
+ auth();
+ $rows=$pdo->query("SELECT pb.id,pb.batch_no,p.name product,pb.input_kg input,pb.output_kg output,pb.wastage_kg waste,pb.qc_status,pb.produced_at,
+  GROUP_CONCAT(CONCAT(r.name,' ',TRIM(TRAILING '0' FROM TRIM(TRAILING '.' FROM pbi.qty_kg)),'kg') ORDER BY r.name SEPARATOR ' + ') components
+  FROM production_batches pb
+  JOIN products p ON p.id=pb.product_id
+  LEFT JOIN production_batch_inputs pbi ON pbi.production_batch_id=pb.id
+  LEFT JOIN raw_tea_materials r ON r.id=pbi.raw_tea_material_id
+  GROUP BY pb.id,pb.batch_no,p.name,pb.input_kg,pb.output_kg,pb.wastage_kg,pb.qc_status,pb.produced_at
+  ORDER BY pb.id DESC LIMIT 300")->fetchAll();
+ out(['ok'=>true,'blends'=>$rows]);
+}
+
+if($route==='blend.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $pid=(int)($body['product_id']??0);$output=(float)($body['output_kg']??0);$qc=(string)($body['qc_status']??'pass');$items=$body['components']??[];
+ if($pid<=0||$output<0||!is_array($items)||count($items)<1||!in_array($qc,['pending','pass','hold','reject'],true)) out(['ok'=>false,'code'=>'INVALID_BLEND'],422);
+ $pq=$pdo->prepare("SELECT id FROM products WHERE id=? AND active=1");$pq->execute([$pid]);if(!$pq->fetchColumn())out(['ok'=>false,'code'=>'PRODUCT_NOT_FOUND'],404);
+ $input=0.0;$normalized=[];
+ foreach($items as $item){
+  $rid=(int)($item['raw_tea_material_id']??0);$kg=(float)($item['kg']??0);if($rid<=0||$kg<=0)out(['ok'=>false,'code'=>'INVALID_BLEND_COMPONENT'],422);
+  $sq=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','purchase_in','adjustment_in') THEN qty_kg WHEN movement_type IN('blend_out','return_out','adjustment_out') THEN -qty_kg ELSE 0 END),0) FROM raw_tea_stock_ledger WHERE raw_tea_material_id=?");
+  $sq->execute([$rid]);$available=(float)$sq->fetchColumn();if($kg>$available+0.00001)out(['ok'=>false,'code'=>'INSUFFICIENT_RAW_TEA','raw_tea_material_id'=>$rid,'available'=>$available],422);
+  $cq=$pdo->prepare("SELECT COALESCE(AVG(unit_rate),0) FROM purchase_items WHERE raw_tea_material_id=? AND unit_rate>0");$cq->execute([$rid]);$cost=(float)$cq->fetchColumn();
+  $input+=$kg;$normalized[]=['id'=>$rid,'kg'=>$kg,'cost'=>$cost];
+ }
+ if($output>$input+0.00001) out(['ok'=>false,'code'=>'OUTPUT_EXCEEDS_INPUT'],422);
+ $batch=trim((string)($body['batch_no']??''));if($batch==='')$batch='BLEND-'.date('ymdHis').'-'.random_int(100,999);
+ $waste=round($input-$output,3);
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare("INSERT INTO production_batches(batch_no,product_id,input_kg,output_kg,wastage_kg,qc_status,produced_at,approved_by) VALUES(?,?,?,?,?,?,NOW(),?)");
+  $q->execute([$batch,$pid,$input,$output,$waste,$qc,(int)$u['id']]);$bid=(int)$pdo->lastInsertId();
+  foreach($normalized as $row){
+   $q=$pdo->prepare("INSERT INTO production_batch_inputs(production_batch_id,raw_tea_material_id,qty_kg,unit_cost) VALUES(?,?,?,?)");
+   $q->execute([$bid,$row['id'],$row['kg'],$row['cost']]);
+   $q=$pdo->prepare("INSERT INTO raw_tea_stock_ledger(raw_tea_material_id,movement_type,qty_kg,unit_cost,reference_type,reference_id,batch_no,created_by) VALUES(?,'blend_out',?,?,'production_batch',?,?,?)");
+   $q->execute([$row['id'],$row['kg'],$row['cost'],$bid,$batch,(int)$u['id']]);
+  }
+  $pdo->commit();audit($pdo,(int)$u['id'],'create','blend_batch',(string)$bid,['batch_no'=>$batch,'input_kg'=>$input,'output_kg'=>$output,'wastage_kg'=>$waste,'components'=>count($normalized)]);
+  out(['ok'=>true,'id'=>$bid,'batch_no'=>$batch,'input_kg'=>$input,'output_kg'=>$output,'wastage_kg'=>$waste],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'BLEND_CREATE_FAILED'],422);}
+}
+
 out(['ok'=>false,'code'=>'NOT_FOUND'],404);
