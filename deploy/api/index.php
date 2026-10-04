@@ -113,6 +113,40 @@ if($route==='products'){
  $rows=$pdo->query('SELECT id,sku,name,category,purchase_cost_per_kg,active FROM products ORDER BY category,name')->fetchAll();
  out(['ok'=>true,'products'=>$rows]);
 }
+
+if($route==='dashboard'){
+ auth();
+ $sales=(float)$pdo->query('SELECT COALESCE(SUM(gross_amount),0) FROM pos_sales')->fetchColumn();
+ $margin=(float)$pdo->query('SELECT COALESCE(SUM(earned_margin),0) FROM pos_sales')->fetchColumn();
+ $expenses=(float)$pdo->query("SELECT COALESCE(SUM(CASE WHEN entry_type='debit' THEN amount ELSE 0 END),0) FROM finance_ledger WHERE division='FRANCHISE'")->fetchColumn();
+ $outlets=(int)$pdo->query("SELECT COUNT(*) FROM franchises WHERE status<>'closed'")->fetchColumn();
+ $receipts=(int)$pdo->query('SELECT COUNT(*) FROM pos_sales')->fetchColumn();
+ out(['ok'=>true,'verified_sales'=>$sales,'franchise_earned_margin'=>$margin,'approved_expenses'=>$expenses,'company_contribution'=>$sales-$margin-$expenses,'active_outlets'=>$outlets,'receipts'=>$receipts]);
+}
+
+if($route==='expenses'){
+ $u=auth();
+ if(!in_array($u['role'],['OWNER','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $rows=$pdo->query("SELECT id,entry_date date,memo name,amount FROM finance_ledger WHERE division='FRANCHISE' AND entry_type='debit' ORDER BY id DESC LIMIT 200")->fetchAll();
+ out(['ok'=>true,'expenses'=>$rows]);
+}
+
+if($route==='expense.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $name=trim((string)($body['name']??'')); $amount=(float)($body['amount']??0);
+ if($name==='' || $amount<=0) out(['ok'=>false,'code'=>'INVALID_EXPENSE'],422);
+ $q=$pdo->prepare("INSERT INTO finance_ledger(entry_date,division,account_code,entry_type,amount,memo,created_by) VALUES(CURDATE(),'FRANCHISE','OPERATING_EXPENSE','debit',?,?,?)");
+ $q->execute([$amount,$name,(int)$u['id']]);
+ $id=(string)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','finance_expense',$id,['name'=>$name,'amount'=>$amount]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='settlement.summary'){
+ auth();
+ $rows=$pdo->query("SELECT DATE_FORMAT(sold_at,'%Y-%m') period,COUNT(*) receipts,SUM(gross_amount) sales,SUM(earned_margin) margin FROM pos_sales GROUP BY DATE_FORMAT(sold_at,'%Y-%m') ORDER BY period DESC LIMIT 24")->fetchAll();
+ out(['ok'=>true,'periods'=>$rows]);
+}
 if($route==='franchises'){
  auth();
  $rows=$pdo->query('SELECT id,code,name,district,upazila,status,margin_mode,margin_tier,margin_percent,opened_at FROM franchises ORDER BY id DESC')->fetchAll();
