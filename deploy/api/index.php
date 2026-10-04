@@ -319,6 +319,165 @@ if($route==='finance.summary'){
  $m=(float)$pdo->query('SELECT COALESCE(SUM(earned_margin),0) FROM pos_sales')->fetchColumn();
  $e=(float)$pdo->query("SELECT COALESCE(SUM(CASE WHEN entry_type='debit' THEN amount ELSE 0 END),0) FROM finance_ledger")->fetchColumn();
  $dist=max(0,$s-$m-$e);
- out(['ok'=>true,'verified_sales'=>$s,'franchise_earned_margin'=>$m,'approved_expenses'=>$e,'distributable_profit'=>$dist]);
+ $settings=[];
+ foreach($pdo->query("SELECT setting_key,setting_value FROM system_settings WHERE setting_key IN('faruk_active_tier','faruk_manual_percent')")->fetchAll() as $row){$settings[$row['setting_key']]=$row['setting_value'];}
+ $tier=$settings['faruk_active_tier']??'Base';
+ $pct=['Base'=>15.0,'Growth'=>20.0,'Elite'=>25.0][$tier]??(float)($settings['faruk_manual_percent']??20);
+ if($tier==='Manual') $pct=(float)($settings['faruk_manual_percent']??20);
+ $share=round($dist*$pct/100,2);
+ out(['ok'=>true,'verified_sales'=>$s,'franchise_earned_margin'=>$m,'approved_expenses'=>$e,'distributable_profit'=>$dist,'faruk_tier'=>$tier,'faruk_percent'=>$pct,'faruk_share'=>$share,'company_net_after_faruk'=>round($dist-$share,2)]);
 }
+
+if($route==='settings'){
+ $u=auth();
+ $rows=$pdo->query('SELECT setting_key,setting_value FROM system_settings ORDER BY setting_key')->fetchAll();
+ $settings=[]; foreach($rows as $row){$settings[$row['setting_key']]=$row['setting_value'];}
+ $defaults=[
+  'pricing_tube30'=>'60','pricing_pouch50'=>'18','pricing_pouch100'=>'22','pricing_ctc250'=>'24','pricing_ctc500'=>'28',
+  'pricing_labour'=>'5','pricing_overhead'=>'7','pricing_logistics'=>'4','pricing_wastage_percent'=>'3','tax_provision_percent'=>'0',
+  'faruk_active_tier'=>'Base','faruk_manual_percent'=>'20'
+ ];
+ foreach($defaults as $k=>$v){if(!array_key_exists($k,$settings))$settings[$k]=$v;}
+ out(['ok'=>true,'settings'=>$settings]);
+}
+
+if($route==='settings.save' && $method==='POST'){
+ csrf(); $u=owner();
+ $allowed=[
+  'pricing_tube30','pricing_pouch50','pricing_pouch100','pricing_ctc250','pricing_ctc500','pricing_labour','pricing_overhead','pricing_logistics',
+  'pricing_wastage_percent','tax_provision_percent','faruk_active_tier','faruk_manual_percent'
+ ];
+ $incoming=$body['settings']??[];
+ if(!is_array($incoming)) out(['ok'=>false,'code'=>'INVALID_SETTINGS'],422);
+ $q=$pdo->prepare('INSERT INTO system_settings(setting_key,setting_value,updated_by) VALUES(?,?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)');
+ foreach($incoming as $k=>$v){
+  if(!in_array($k,$allowed,true)) continue;
+  if($k==='faruk_active_tier'){
+   if(!in_array((string)$v,['Base','Growth','Elite','Manual'],true)) out(['ok'=>false,'code'=>'INVALID_FARUK_TIER'],422);
+  }else{
+   if(!is_numeric($v) || (float)$v<0) out(['ok'=>false,'code'=>'INVALID_SETTING_VALUE','key'=>$k],422);
+  }
+  $q->execute([$k,(string)$v,(int)$u['id']]);
+ }
+ audit($pdo,(int)$u['id'],'update','system_settings',null,$incoming);
+ out(['ok'=>true]);
+}
+
+if($route==='roles'){
+ owner();
+ $rows=$pdo->query('SELECT id,code,name FROM roles ORDER BY id')->fetchAll();
+ out(['ok'=>true,'roles'=>$rows]);
+}
+
+if($route==='user.create' && $method==='POST'){
+ csrf(); $u=owner();
+ $name=trim((string)($body['name']??''));$email=strtolower(trim((string)($body['email']??'')));$role=(string)($body['role']??'');
+ if($name===''||!filter_var($email,FILTER_VALIDATE_EMAIL)) out(['ok'=>false,'code'=>'INVALID_USER'],422);
+ $rq=$pdo->prepare('SELECT id FROM roles WHERE code=?');$rq->execute([$role]);$rid=$rq->fetchColumn();
+ if(!$rid) out(['ok'=>false,'code'=>'INVALID_ROLE'],422);
+ $temp='Tsb!'.bin2hex(random_bytes(6)).'A7';
+ try{
+  $q=$pdo->prepare('INSERT INTO users(role_id,name,email,password_hash,must_change_password,active) VALUES(?,?,?,?,1,1)');
+  $q->execute([$rid,$name,$email,password_hash($temp,PASSWORD_DEFAULT)]);
+  $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','user',(string)$id,['name'=>$name,'email'=>$email,'role'=>$role]);
+  out(['ok'=>true,'id'=>$id,'temporary_password'=>$temp],201);
+ }catch(Throwable $e){out(['ok'=>false,'code'=>'USER_CREATE_FAILED'],422);}
+}
+
+if($route==='user.toggle' && $method==='POST'){
+ csrf(); $u=owner();$id=(int)($body['id']??0);$active=(int)!empty($body['active']);
+ if($id<=0||$id===(int)$u['id']) out(['ok'=>false,'code'=>'INVALID_USER_ACTION'],422);
+ $q=$pdo->prepare('UPDATE users SET active=? WHERE id=?');$q->execute([$active,$id]);
+ audit($pdo,(int)$u['id'],'update_status','user',(string)$id,['active'=>$active]);
+ out(['ok'=>true]);
+}
+
+if($route==='user.reset' && $method==='POST'){
+ csrf(); $u=owner();$id=(int)($body['id']??0);
+ if($id<=0) out(['ok'=>false,'code'=>'INVALID_USER'],422);
+ $temp='Tsb!'.bin2hex(random_bytes(6)).'R9';
+ $q=$pdo->prepare('UPDATE users SET password_hash=?,must_change_password=1 WHERE id=?');$q->execute([password_hash($temp,PASSWORD_DEFAULT),$id]);
+ audit($pdo,(int)$u['id'],'reset_password','user',(string)$id);
+ out(['ok'=>true,'temporary_password'=>$temp]);
+}
+
+if($route==='audit'){
+ owner();
+ $rows=$pdo->query("SELECT a.id,a.created_at,a.action,a.entity_type,a.entity_id,a.ip_address,u.name user_name FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200")->fetchAll();
+ out(['ok'=>true,'audit'=>$rows]);
+}
+
+if($route==='reports.summary'){
+ auth();
+ $totals=[
+  'sales'=>(float)$pdo->query('SELECT COALESCE(SUM(gross_amount),0) FROM pos_sales')->fetchColumn(),
+  'earned_margin'=>(float)$pdo->query('SELECT COALESCE(SUM(earned_margin),0) FROM pos_sales')->fetchColumn(),
+  'receipts'=>(int)$pdo->query('SELECT COUNT(*) FROM pos_sales')->fetchColumn(),
+  'purchases'=>(float)$pdo->query('SELECT COALESCE(SUM(total_amount),0) FROM purchase_receipts WHERE status="received"')->fetchColumn(),
+  'raw_kg'=>(float)$pdo->query('SELECT COALESCE(SUM(quantity_kg),0) FROM purchase_items')->fetchColumn(),
+  'production_kg'=>(float)$pdo->query("SELECT COALESCE(SUM(output_kg),0) FROM production_batches WHERE qc_status='pass'")->fetchColumn(),
+  'wastage_kg'=>(float)$pdo->query('SELECT COALESCE(SUM(wastage_kg),0) FROM production_batches')->fetchColumn(),
+  'active_outlets'=>(int)$pdo->query("SELECT COUNT(*) FROM franchises WHERE status='active'")->fetchColumn()
+ ];
+ $top=$pdo->query("SELECT f.name outlet,COUNT(s.id) receipts,COALESCE(SUM(s.gross_amount),0) sales,COALESCE(SUM(s.earned_margin),0) margin FROM franchises f LEFT JOIN pos_sales s ON s.franchise_id=f.id GROUP BY f.id,f.name ORDER BY sales DESC LIMIT 20")->fetchAll();
+ $monthly=$pdo->query("SELECT DATE_FORMAT(sold_at,'%Y-%m') period,COUNT(*) receipts,SUM(gross_amount) sales,SUM(earned_margin) margin FROM pos_sales GROUP BY DATE_FORMAT(sold_at,'%Y-%m') ORDER BY period DESC LIMIT 12")->fetchAll();
+ out(['ok'=>true,'totals'=>$totals,'top_outlets'=>$top,'monthly'=>$monthly]);
+}
+
+if($route==='settlements'){
+ auth();
+ $rows=$pdo->query("SELECT s.id,f.name outlet,s.period_start,s.period_end,s.opening_stock_value,s.stock_received_value,s.verified_sales,s.approved_returns,s.closing_stock_value,s.earned_margin,s.tax_adjustment,s.previous_balance,s.net_payable,s.status,s.locked_at FROM settlements s JOIN franchises f ON f.id=s.franchise_id ORDER BY s.period_end DESC,f.name")->fetchAll();
+ out(['ok'=>true,'settlements'=>$rows]);
+}
+
+if($route==='settlement.generate' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $period=(string)($body['period']??'');
+ if(!preg_match('/^\d{4}-\d{2}$/',$period)) out(['ok'=>false,'code'=>'INVALID_PERIOD'],422);
+ $start=$period.'-01';$end=date('Y-m-t',strtotime($start));
+ $franchises=$pdo->query("SELECT id FROM franchises WHERE status<>'closed' ORDER BY id")->fetchAll();
+ $pdo->beginTransaction();
+ try{
+  foreach($franchises as $fr){
+   $fid=(int)$fr['id'];
+   $check=$pdo->prepare("SELECT id,status FROM settlements WHERE franchise_id=? AND period_start=? AND period_end=?");$check->execute([$fid,$start,$end]);$existing=$check->fetch();
+   if($existing && in_array($existing['status'],['locked','paid'],true)) continue;
+   $q=$pdo->prepare("SELECT COALESCE(SUM(gross_amount),0) sales,COALESCE(SUM(earned_margin),0) margin FROM pos_sales WHERE franchise_id=? AND DATE(sold_at) BETWEEN ? AND ?");$q->execute([$fid,$start,$end]);$sale=$q->fetch();
+   $q=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty*unit_value WHEN movement_type IN('transfer_out','sale','damage') THEN -qty*unit_value ELSE qty*unit_value END),0) FROM inventory_ledger WHERE location_type='franchise' AND location_id=? AND DATE(created_at)<?");$q->execute([$fid,$start]);$opening=(float)$q->fetchColumn();
+   $q=$pdo->prepare("SELECT COALESCE(SUM(qty*unit_value),0) FROM inventory_ledger WHERE location_type='franchise' AND location_id=? AND movement_type='transfer_in' AND DATE(created_at) BETWEEN ? AND ?");$q->execute([$fid,$start,$end]);$received=(float)$q->fetchColumn();
+   $q=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty*unit_value WHEN movement_type IN('transfer_out','sale','damage') THEN -qty*unit_value ELSE qty*unit_value END),0) FROM inventory_ledger WHERE location_type='franchise' AND location_id=? AND DATE(created_at)<=?");$q->execute([$fid,$end]);$closing=(float)$q->fetchColumn();
+   $verified=(float)$sale['sales'];$earned=(float)$sale['margin'];$net=round($verified-$earned,2);
+   if($existing){
+    $q=$pdo->prepare("UPDATE settlements SET opening_stock_value=?,stock_received_value=?,verified_sales=?,closing_stock_value=?,earned_margin=?,net_payable=?,status='review',approved_by=NULL,locked_at=NULL WHERE id=?");
+    $q->execute([$opening,$received,$verified,$closing,$earned,$net,(int)$existing['id']]);
+   }else{
+    $q=$pdo->prepare("INSERT INTO settlements(franchise_id,period_start,period_end,opening_stock_value,stock_received_value,verified_sales,closing_stock_value,earned_margin,net_payable,status) VALUES(?,?,?,?,?,?,?,?,?,'review')");
+    $q->execute([$fid,$start,$end,$opening,$received,$verified,$closing,$earned,$net]);
+   }
+  }
+  $pdo->commit(); audit($pdo,(int)$u['id'],'generate','settlement_period',$period,['period_start'=>$start,'period_end'=>$end]);
+  out(['ok'=>true,'period'=>$period]);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'SETTLEMENT_GENERATE_FAILED'],422);}
+}
+
+if($route==='settlement.lock' && $method==='POST'){
+ csrf(); $u=owner();$id=(int)($body['id']??0);
+ if($id<=0) out(['ok'=>false,'code'=>'INVALID_SETTLEMENT'],422);
+ $q=$pdo->prepare("UPDATE settlements SET status='locked',approved_by=?,locked_at=NOW() WHERE id=? AND status IN('draft','review','approved')");
+ $q->execute([(int)$u['id'],$id]);
+ if($q->rowCount()!==1) out(['ok'=>false,'code'=>'SETTLEMENT_NOT_LOCKABLE'],422);
+ audit($pdo,(int)$u['id'],'lock','settlement',(string)$id);
+ out(['ok'=>true]);
+}
+
+if($route==='settlement.paid' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $id=(int)($body['id']??0);$q=$pdo->prepare("UPDATE settlements SET status='paid' WHERE id=? AND status='locked'");$q->execute([$id]);
+ if($q->rowCount()!==1) out(['ok'=>false,'code'=>'SETTLEMENT_NOT_PAYABLE'],422);
+ audit($pdo,(int)$u['id'],'mark_paid','settlement',(string)$id);
+ out(['ok'=>true]);
+}
+
 out(['ok'=>false,'code'=>'NOT_FOUND'],404);
