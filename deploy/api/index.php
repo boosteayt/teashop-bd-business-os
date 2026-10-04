@@ -110,7 +110,16 @@ if($route==='users'){
 
 if($route==='products'){
  auth();
- $rows=$pdo->query('SELECT id,sku,name,category,purchase_cost_per_kg,active FROM products ORDER BY category,name')->fetchAll();
+ $rows=$pdo->query("SELECT p.id,p.sku,p.name,p.category,p.purchase_cost_per_kg,p.active,
+  COALESCE((
+    SELECT ROUND(SUM(pbi.qty_kg*pbi.unit_cost)/NULLIF(pb.output_kg,0),2)
+    FROM production_batches pb
+    JOIN production_batch_inputs pbi ON pbi.production_batch_id=pb.id
+    WHERE pb.product_id=p.id AND pb.qc_status='pass'
+    GROUP BY pb.id,pb.output_kg
+    ORDER BY pb.id DESC LIMIT 1
+  ),p.purchase_cost_per_kg) effective_cost_per_kg
+  FROM products p ORDER BY p.category,p.name")->fetchAll();
  out(['ok'=>true,'products'=>$rows]);
 }
 
