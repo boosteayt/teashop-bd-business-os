@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+storage/
+uploads/
+backups/
+*.sql.gz
+*.zip
+.DS_Store
