@@ -114,6 +114,97 @@ if($route==='products'){
  out(['ok'=>true,'products'=>$rows]);
 }
 
+if($route==='purchases'){
+ $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $rows=$pdo->query("SELECT pr.id,pr.reference_no,pr.received_date date,s.name supplier,pi.material_name product,pi.quantity_kg kg,pi.unit_rate rate,pi.batch_no,pr.total_amount FROM purchase_receipts pr JOIN purchase_items pi ON pi.purchase_receipt_id=pr.id LEFT JOIN suppliers s ON s.id=pr.supplier_id ORDER BY pr.id DESC LIMIT 300")->fetchAll();
+ out(['ok'=>true,'purchases'=>$rows]);
+}
+
+if($route==='purchase.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $supplier=trim((string)($body['supplier']??'')); $pid=(int)($body['product_id']??0); $kg=(float)($body['kg']??0); $rate=(float)($body['rate']??0); $batch=trim((string)($body['batch_no']??''));
+ if($supplier===''||$pid<=0||$kg<=0||$rate<0) out(['ok'=>false,'code'=>'INVALID_PURCHASE'],422);
+ $pq=$pdo->prepare('SELECT name FROM products WHERE id=? AND active=1'); $pq->execute([$pid]); $productName=$pq->fetchColumn();
+ if(!$productName) out(['ok'=>false,'code'=>'PRODUCT_NOT_FOUND'],404);
+ $pdo->beginTransaction();
+ try{
+  $sq=$pdo->prepare("SELECT id FROM suppliers WHERE name=? AND supplier_type='tea' LIMIT 1"); $sq->execute([$supplier]); $sid=$sq->fetchColumn();
+  if(!$sid){$iq=$pdo->prepare("INSERT INTO suppliers(supplier_type,name) VALUES('tea',?)");$iq->execute([$supplier]);$sid=$pdo->lastInsertId();}
+  $ref='GRN-'.date('ymdHis').'-'.random_int(100,999); $total=round($kg*$rate,2);
+  $q=$pdo->prepare("INSERT INTO purchase_receipts(supplier_id,reference_no,received_date,status,total_amount,created_by) VALUES(?,?,CURDATE(),'received',?,?)");
+  $q->execute([$sid,$ref,$total,(int)$u['id']]); $rid=(int)$pdo->lastInsertId();
+  $q=$pdo->prepare('INSERT INTO purchase_items(purchase_receipt_id,product_id,material_name,quantity_kg,unit_rate,batch_no) VALUES(?,?,?,?,?,?)');
+  $q->execute([$rid,$pid,$productName,$kg,$rate,$batch?:null]);
+  $pdo->commit(); audit($pdo,(int)$u['id'],'create','purchase_receipt',(string)$rid,['reference'=>$ref,'product_id'=>$pid,'kg'=>$kg,'rate'=>$rate]);
+  out(['ok'=>true,'id'=>$rid,'reference_no'=>$ref],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'PURCHASE_CREATE_FAILED'],422);}
+}
+
+if($route==='production'){
+ $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $rows=$pdo->query("SELECT pb.id,pb.batch_no,p.name product,pb.input_kg input,pb.output_kg output,pb.wastage_kg waste,pb.qc_status,pb.produced_at FROM production_batches pb JOIN products p ON p.id=pb.product_id ORDER BY pb.id DESC LIMIT 300")->fetchAll();
+ out(['ok'=>true,'production'=>$rows]);
+}
+
+if($route==='production.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $pid=(int)($body['product_id']??0); $input=(float)($body['input']??0); $output=(float)($body['output']??0); $batch=trim((string)($body['batch_no']??''));
+ $qc=(string)($body['qc_status']??'pass');
+ if($pid<=0||$input<=0||$output<0||$output>$input||!in_array($qc,['pending','pass','hold','reject'],true)) out(['ok'=>false,'code'=>'INVALID_PRODUCTION'],422);
+ if($batch==='') $batch='BATCH-'.date('ymdHis').'-'.random_int(100,999);
+ $waste=round($input-$output,3);
+ try{
+  $q=$pdo->prepare('INSERT INTO production_batches(batch_no,product_id,input_kg,output_kg,wastage_kg,qc_status,produced_at,approved_by) VALUES(?,?,?,?,?,?,NOW(),?)');
+  $q->execute([$batch,$pid,$input,$output,$waste,$qc,(int)$u['id']]); $id=(int)$pdo->lastInsertId();
+  audit($pdo,(int)$u['id'],'create','production_batch',(string)$id,['batch_no'=>$batch,'product_id'=>$pid,'input'=>$input,'output'=>$output,'waste'=>$waste,'qc'=>$qc]);
+  out(['ok'=>true,'id'=>$id,'batch_no'=>$batch,'wastage_kg'=>$waste],201);
+ }catch(Throwable $e){out(['ok'=>false,'code'=>'PRODUCTION_CREATE_FAILED'],422);}
+}
+
+if($route==='packaging'){
+ $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $rows=$pdo->query("SELECT pj.id,pj.job_no,p.name product,pp.grams pack,pj.pack_qty qty,(pp.grams*pj.pack_qty) grams,pj.batch_no,pj.labour_cost,pj.sealing_cost,pj.other_cost,pj.completed_at FROM packaging_jobs pj JOIN product_packs pp ON pp.id=pj.product_pack_id JOIN products p ON p.id=pp.product_id ORDER BY pj.id DESC LIMIT 300")->fetchAll();
+ out(['ok'=>true,'packaging'=>$rows]);
+}
+
+if($route==='packaging.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $pid=(int)($body['product_id']??0); $grams=(int)($body['grams']??0); $qty=(int)($body['qty']??0); $batch=trim((string)($body['batch_no']??''));
+ $labour=(float)($body['labour_cost']??0); $sealing=(float)($body['sealing_cost']??0); $other=(float)($body['other_cost']??0); $mrp=(float)($body['mrp']??0);
+ $pq=$pdo->prepare('SELECT category FROM products WHERE id=? AND active=1');$pq->execute([$pid]);$category=$pq->fetchColumn();
+ if(!$category||$qty<=0) out(['ok'=>false,'code'=>'INVALID_PACKAGING'],422);
+ $allowed=$category==='CTC / Black Tea'?[250,500,1000,2000,5000]:[30,50,100,200,250];
+ if(!in_array($grams,$allowed,true)) out(['ok'=>false,'code'=>'INVALID_PACK_SIZE'],422);
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare('SELECT id FROM product_packs WHERE product_id=? AND grams=? LIMIT 1');$q->execute([$pid,$grams]);$packId=$q->fetchColumn();
+  if(!$packId){$q=$pdo->prepare('INSERT INTO product_packs(product_id,grams,mrp,active) VALUES(?,?,?,1)');$q->execute([$pid,$grams,$mrp]);$packId=$pdo->lastInsertId();}
+  elseif($mrp>0){$q=$pdo->prepare('UPDATE product_packs SET mrp=? WHERE id=?');$q->execute([$mrp,$packId]);}
+  $job='PKG-'.date('ymdHis').'-'.random_int(100,999);
+  $q=$pdo->prepare('INSERT INTO packaging_jobs(job_no,product_pack_id,batch_no,pack_qty,labour_cost,sealing_cost,other_cost,completed_at,created_by) VALUES(?,?,?,?,?,?,?,NOW(),?)');
+  $q->execute([$job,$packId,$batch?:null,$qty,$labour,$sealing,$other,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+  $q=$pdo->prepare("INSERT INTO inventory_ledger(location_type,location_id,product_pack_id,movement_type,qty,unit_value,reference_type,reference_id,batch_no,created_by) VALUES('central',NULL,?,'production_in',?,?,?,?,?,?,?)");
+  $q->execute([$packId,$qty,$mrp,'packaging_job',$id,$batch?:null,(int)$u['id']]);
+  $pdo->commit(); audit($pdo,(int)$u['id'],'create','packaging_job',(string)$id,['job_no'=>$job,'product_id'=>$pid,'grams'=>$grams,'qty'=>$qty]);
+  out(['ok'=>true,'id'=>$id,'job_no'=>$job],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'PACKAGING_CREATE_FAILED'],422);}
+}
+
+if($route==='inventory'){
+ auth();
+ $rows=$pdo->query("SELECT p.name product,p.category,pp.grams pack,pp.mrp,SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) qty FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id JOIN products p ON p.id=pp.product_id WHERE il.location_type='central' GROUP BY il.product_pack_id,p.name,p.category,pp.grams,pp.mrp HAVING ABS(qty)>0.0001 ORDER BY p.category,p.name,pp.grams")->fetchAll();
+ $raw=(float)$pdo->query('SELECT COALESCE(SUM(quantity_kg),0) FROM purchase_items')->fetchColumn();
+ $produced=(float)$pdo->query("SELECT COALESCE(SUM(output_kg),0) FROM production_batches WHERE qc_status='pass'")->fetchColumn();
+ $waste=(float)$pdo->query('SELECT COALESCE(SUM(wastage_kg),0) FROM production_batches')->fetchColumn();
+ out(['ok'=>true,'raw_received_kg'=>$raw,'produced_kg'=>$produced,'wastage_kg'=>$waste,'stock'=>$rows]);
+}
+
 if($route==='dashboard'){
  auth();
  $sales=(float)$pdo->query('SELECT COALESCE(SUM(gross_amount),0) FROM pos_sales')->fetchColumn();
