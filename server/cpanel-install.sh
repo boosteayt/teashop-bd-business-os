@@ -28,15 +28,15 @@ DBPASS="$(openssl rand -hex 18)"
 SETUPTOKEN="$(openssl rand -hex 24)"
 
 echo "Creating database..."
-DBJSON="$("$UAPI" --user="$CPUSER" --output=json Mysql create_database name="$DB")"
+DBJSON="$("$UAPI" --output=json Mysql create_database name="$DB")"
 echo "$DBJSON" | grep -q '"status":1' || { echo "$DBJSON"; exit 1; }
 
 echo "Creating database user..."
-USERJSON="$("$UAPI" --user="$CPUSER" --output=json Mysql create_user name="$DBUSER" password="$DBPASS")"
+USERJSON="$("$UAPI" --output=json Mysql create_user name="$DBUSER" password="$DBPASS")"
 echo "$USERJSON" | grep -q '"status":1' || { echo "$USERJSON"; exit 1; }
 
 echo "Granting privileges..."
-PRIVJSON="$("$UAPI" --user="$CPUSER" --output=json Mysql set_privileges_on_database user="$DBUSER" database="$DB" privileges=ALL%20PRIVILEGES)"
+PRIVJSON="$("$UAPI" --output=json Mysql set_privileges_on_database user="$DBUSER" database="$DB" privileges=ALL%20PRIVILEGES)"
 echo "$PRIVJSON" | grep -q '"status":1' || { echo "$PRIVJSON"; exit 1; }
 
 umask 077
