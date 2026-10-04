@@ -786,4 +786,19 @@ if($route==='blend.create' && $method==='POST'){
  }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'BLEND_CREATE_FAILED'],422);}
 }
 
+if($route==='pricing.packaging-costs'){
+ auth();
+ $rows=$pdo->query("SELECT pp.product_id,pp.grams,
+  COALESCE(SUM(b.qty_per_pack*COALESCE((
+    SELECT SUM(ppi.quantity*ppi.unit_rate)/NULLIF(SUM(ppi.quantity),0)
+    FROM packaging_purchase_items ppi
+    WHERE ppi.packaging_material_id=b.packaging_material_id AND ppi.unit_rate>0
+  ),pm.unit_cost,0)),0) packaging_cost
+  FROM product_packs pp
+  LEFT JOIN product_packaging_bom b ON b.product_pack_id=pp.id
+  LEFT JOIN packaging_materials pm ON pm.id=b.packaging_material_id
+  GROUP BY pp.id,pp.product_id,pp.grams")->fetchAll();
+ out(['ok'=>true,'costs'=>$rows]);
+}
+
 out(['ok'=>false,'code'=>'NOT_FOUND'],404);
