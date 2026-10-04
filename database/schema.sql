@@ -31,7 +31,11 @@ CREATE TABLE suppliers (
  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
  supplier_type ENUM('tea','packaging','logistics','other') NOT NULL,
  name VARCHAR(160) NOT NULL,
+ contact_person VARCHAR(120) NULL,
  phone VARCHAR(50), email VARCHAR(190), address VARCHAR(255),
+ payment_terms_days INT NOT NULL DEFAULT 0,
+ credit_limit DECIMAL(14,2) NOT NULL DEFAULT 0,
+ opening_balance DECIMAL(14,2) NOT NULL DEFAULT 0,
  active TINYINT(1) DEFAULT 1,
  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -73,7 +77,10 @@ CREATE TABLE purchase_receipts (
  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
  supplier_id BIGINT UNSIGNED NULL,
  reference_no VARCHAR(80),
+ invoice_no VARCHAR(100) NULL,
+ challan_no VARCHAR(100) NULL,
  received_date DATE NOT NULL,
+ due_date DATE NULL,
  status ENUM('draft','received','cancelled') DEFAULT 'received',
  total_amount DECIMAL(14,2) DEFAULT 0,
  created_by BIGINT UNSIGNED NULL,
@@ -107,6 +114,21 @@ CREATE TABLE supplier_payments (
  FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
  KEY idx_supplier_payment_supplier(supplier_id),
  KEY idx_supplier_payment_date(payment_date)
+);
+
+CREATE TABLE supplier_returns (
+ id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+ supplier_id BIGINT UNSIGNED NOT NULL,
+ return_date DATE NOT NULL,
+ source_type ENUM('tea','packaging','other') NOT NULL,
+ amount DECIMAL(14,2) NOT NULL,
+ reference_no VARCHAR(100) NULL,
+ memo VARCHAR(255) NULL,
+ created_by BIGINT UNSIGNED NULL,
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
+ KEY idx_supplier_return_supplier(supplier_id),
+ KEY idx_supplier_return_date(return_date)
 );
 
 CREATE TABLE production_batches (
@@ -157,7 +179,67 @@ CREATE TABLE packaging_materials (
  unit VARCHAR(30) NOT NULL DEFAULT 'pcs',
  unit_cost DECIMAL(12,4) DEFAULT 0,
  stock_qty DECIMAL(14,3) DEFAULT 0,
- active TINYINT(1) DEFAULT 1
+ reorder_level DECIMAL(14,3) NOT NULL DEFAULT 0,
+ active TINYINT(1) DEFAULT 1,
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE packaging_purchase_receipts (
+ id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+ supplier_id BIGINT UNSIGNED NOT NULL,
+ reference_no VARCHAR(80) NOT NULL,
+ invoice_no VARCHAR(100) NULL,
+ challan_no VARCHAR(100) NULL,
+ received_date DATE NOT NULL,
+ due_date DATE NULL,
+ status ENUM('draft','received','cancelled') DEFAULT 'received',
+ total_amount DECIMAL(14,2) DEFAULT 0,
+ created_by BIGINT UNSIGNED NULL,
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(supplier_id) REFERENCES suppliers(id),
+ KEY idx_pack_purchase_supplier(supplier_id),
+ KEY idx_pack_purchase_date(received_date)
+);
+
+CREATE TABLE packaging_purchase_items (
+ id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+ packaging_purchase_receipt_id BIGINT UNSIGNED NOT NULL,
+ packaging_material_id BIGINT UNSIGNED NOT NULL,
+ quantity DECIMAL(14,3) NOT NULL,
+ unit_rate DECIMAL(12,4) NOT NULL,
+ line_total DECIMAL(14,2) NOT NULL,
+ batch_no VARCHAR(80) NULL,
+ FOREIGN KEY(packaging_purchase_receipt_id) REFERENCES packaging_purchase_receipts(id),
+ FOREIGN KEY(packaging_material_id) REFERENCES packaging_materials(id),
+ KEY idx_pack_purchase_item_receipt(packaging_purchase_receipt_id),
+ KEY idx_pack_purchase_item_material(packaging_material_id)
+);
+
+CREATE TABLE packaging_stock_ledger (
+ id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+ packaging_material_id BIGINT UNSIGNED NOT NULL,
+ movement_type ENUM('opening','purchase_in','production_out','return_out','damage_out','adjustment_in','adjustment_out') NOT NULL,
+ qty DECIMAL(14,3) NOT NULL,
+ unit_cost DECIMAL(12,4) NOT NULL DEFAULT 0,
+ reference_type VARCHAR(40) NULL,
+ reference_id BIGINT UNSIGNED NULL,
+ batch_no VARCHAR(80) NULL,
+ created_by BIGINT UNSIGNED NULL,
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(packaging_material_id) REFERENCES packaging_materials(id),
+ KEY idx_pack_stock_material(packaging_material_id),
+ KEY idx_pack_stock_time(created_at)
+);
+
+CREATE TABLE product_packaging_bom (
+ id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+ product_pack_id BIGINT UNSIGNED NOT NULL,
+ packaging_material_id BIGINT UNSIGNED NOT NULL,
+ qty_per_pack DECIMAL(12,4) NOT NULL,
+ UNIQUE KEY uq_packaging_bom(product_pack_id,packaging_material_id),
+ FOREIGN KEY(product_pack_id) REFERENCES product_packs(id),
+ FOREIGN KEY(packaging_material_id) REFERENCES packaging_materials(id),
+ KEY idx_bom_material(packaging_material_id)
 );
 
 CREATE TABLE packaging_jobs (
