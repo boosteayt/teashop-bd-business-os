@@ -740,7 +740,9 @@ if($route==='rawtea.purchase.create' && $method==='POST'){
 if($route==='blends'){
  auth();
  $rows=$pdo->query("SELECT pb.id,pb.batch_no,p.name product,pb.input_kg input,pb.output_kg output,pb.wastage_kg waste,pb.qc_status,pb.produced_at,
-  GROUP_CONCAT(CONCAT(r.name,' ',TRIM(TRAILING '0' FROM TRIM(TRAILING '.' FROM pbi.qty_kg)),'kg') ORDER BY r.name SEPARATOR ' + ') components
+  GROUP_CONCAT(CONCAT(r.name,' ',TRIM(TRAILING '0' FROM TRIM(TRAILING '.' FROM pbi.qty_kg)),'kg') ORDER BY r.name SEPARATOR ' + ') components,
+  COALESCE(SUM(pbi.qty_kg*pbi.unit_cost),0) input_cost,
+  COALESCE(ROUND(SUM(pbi.qty_kg*pbi.unit_cost)/NULLIF(pb.output_kg,0),2),0) cost_per_output_kg
   FROM production_batches pb
   JOIN products p ON p.id=pb.product_id
   LEFT JOIN production_batch_inputs pbi ON pbi.production_batch_id=pb.id
