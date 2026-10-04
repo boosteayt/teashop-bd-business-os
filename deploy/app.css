@@ -378,3 +378,152 @@ tbody tr:hover{background:#fbfcfb}
  .stats,.twocol,.features,.controlGrid,.formrow{grid-template-columns:1fr}
  .pos{grid-template-columns:1fr}
 }
+/* stripe-density-v11 */
+/* Stripe-style compact product dashboard: eliminate duplicated vertical title space */
+.app{grid-template-columns:216px minmax(0,1fr)}
+aside{padding:14px 10px 12px}
+.brand{padding:0 6px 11px;margin-bottom:9px}
+.rolebox{margin-bottom:9px;padding:8px 9px}
+nav{gap:7px}
+.navGroup{gap:2px}
+.navGroup>small{padding:4px 9px 2px;font-size:7px}
+nav button{min-height:31px;padding:7px 9px;font-size:10.5px;border-radius:7px}
+.logout{padding:10px 9px 3px}
+
+header{
+  height:46px;
+  padding:0 20px;
+  background:#fff;
+  border-bottom:1px solid #e7eaee;
+  box-shadow:0 1px 0 rgba(20,28,24,.01);
+}
+.topCrumb{font-size:9px;gap:6px}
+.topCrumb b{font-size:10px}
+.headerRight{gap:7px}
+.topRole{font-size:9px}
+.avatar{width:29px;height:29px;border-radius:8px;font-size:9px}
+.pill{font-size:7px;padding:4px 6px}
+
+.pageCanvas{
+  max-width:none;
+  padding:10px 20px 28px;
+}
+
+/* one compact title strip per page instead of a large admin-page hero */
+.moduleHead{
+  display:grid;
+  grid-template-columns:auto 1fr;
+  grid-template-areas:
+    "eyebrow title"
+    ". desc";
+  column-gap:9px;
+  row-gap:1px;
+  align-items:center;
+  padding:4px 0 9px;
+  margin:0;
+  min-height:0;
+}
+.moduleHead small{
+  grid-area:eyebrow;
+  align-self:center;
+  font-size:7px;
+  letter-spacing:.09em;
+  white-space:nowrap;
+  color:#a37c36;
+}
+.moduleHead h1{
+  grid-area:title;
+  font-size:17px;
+  line-height:1.2;
+  margin:0;
+  letter-spacing:-.015em;
+  color:#18231d;
+}
+.moduleHead p{
+  grid-area:desc;
+  font-size:9.5px;
+  line-height:1.35;
+  margin:1px 0 0;
+  color:#7e8983;
+  max-width:980px;
+}
+.compactHead{
+  display:flex;
+  align-items:baseline;
+  gap:8px;
+  padding:8px 0 7px;
+  margin:0;
+}
+.compactHead small{font-size:7px}
+.compactHead h1{font-size:14px;margin:0}
+
+/* Stripe-like surface rhythm */
+.stats{gap:8px;margin:8px 0 10px}
+.card{padding:12px 13px;border-radius:9px}
+.card:before{top:12px;bottom:12px}
+.card span,.card small{font-size:8.5px}
+.card b{font-size:17px;margin:5px 0 2px}
+.panel,.tablewrap.panel,.features article{border-radius:9px}
+.panel{padding:12px}
+.title{margin-bottom:8px}
+.title h3{font-size:11.5px}
+.twocol{gap:8px;margin-bottom:8px}
+
+.formrow{gap:7px;margin-bottom:7px}
+.controlGrid{gap:7px}
+.field{font-size:8.5px}
+.field input,.field select,select{
+  min-height:32px;
+  padding:7px 8px;
+  font-size:10.5px;
+  border-radius:7px;
+}
+.primary{min-height:32px;padding:8px 11px;font-size:9.5px;border-radius:7px}
+.primary.fit{height:32px}
+.miniBtn{padding:6px 8px;font-size:8.5px;border-radius:7px}
+.toolbar{margin:7px 0;gap:7px}
+.toolbar select{min-width:155px}
+
+th{padding:8px 9px;font-size:7.5px}
+td{padding:9px;font-size:9.5px}
+td b{font-size:9.5px}
+.empty{padding:15px;font-size:9.5px}
+
+.hero{
+  border-radius:10px;
+  padding:16px 18px;
+}
+.hero h1{font-size:20px;margin:3px 0}
+.hero p{font-size:10px}
+.goal{padding-left:18px}
+.goal b{font-size:23px}
+
+.notice,.credentialNotice,.authError{padding:9px 10px;font-size:9.5px}
+.blendCostBar,.bomTotal{padding:8px 9px;font-size:9.5px}
+.products button{min-height:88px;padding:9px}
+.cart{min-height:380px}
+
+/* make dense data screens feel like a product dashboard, not an admin form */
+.controls{margin-bottom:8px}
+.tablewrap.panel{overflow:hidden}
+.tablewrap.panel .tablewrap{border-radius:0}
+.supplierDetail{margin-top:8px}
+
+@media(max-width:1180px){
+  .app{grid-template-columns:200px minmax(0,1fr)}
+  header{padding:0 16px}
+  .pageCanvas{padding:10px 16px 24px}
+  .formrow{grid-template-columns:repeat(3,minmax(110px,1fr))}
+}
+@media(max-width:760px){
+  header{height:44px;padding:0 10px}
+  .pageCanvas{padding:9px 10px 20px}
+  .moduleHead{
+    display:block;
+    padding:2px 0 8px;
+  }
+  .moduleHead small{display:block;margin-bottom:2px}
+  .moduleHead h1{font-size:16px}
+  .moduleHead p{font-size:9px;margin-top:2px}
+  .hero{padding:14px}
+}
