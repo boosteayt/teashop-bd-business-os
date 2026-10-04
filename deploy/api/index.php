@@ -610,13 +610,14 @@ if($route==='rawtea.purchase.create' && $method==='POST'){
  if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $sid=(int)($body['supplier_id']??0);$rid=(int)($body['raw_tea_material_id']??0);$kg=(float)($body['kg']??0);$rate=(float)($body['rate']??0);$lot=trim((string)($body['batch_no']??''));
  if($sid<=0||$rid<=0||$kg<=0||$rate<0) out(['ok'=>false,'code'=>'INVALID_PURCHASE'],422);
- $sq=$pdo->prepare("SELECT id FROM suppliers WHERE id=? AND supplier_type='tea' AND active=1");$sq->execute([$sid]);if(!$sq->fetchColumn())out(['ok'=>false,'code'=>'SUPPLIER_NOT_FOUND'],404);
+ $sq=$pdo->prepare("SELECT id,payment_terms_days FROM suppliers WHERE id=? AND supplier_type='tea' AND active=1");$sq->execute([$sid]);$supplier=$sq->fetch();if(!$supplier)out(['ok'=>false,'code'=>'SUPPLIER_NOT_FOUND'],404);
  $rq=$pdo->prepare("SELECT name FROM raw_tea_materials WHERE id=? AND active=1");$rq->execute([$rid]);$rawName=$rq->fetchColumn();if(!$rawName)out(['ok'=>false,'code'=>'RAW_TEA_NOT_FOUND'],404);
  $pdo->beginTransaction();
  try{
   $ref='GRN-'.date('ymdHis').'-'.random_int(100,999);$total=round($kg*$rate,2);
-  $q=$pdo->prepare("INSERT INTO purchase_receipts(supplier_id,reference_no,received_date,status,total_amount,created_by) VALUES(?,?,CURDATE(),'received',?,?)");
-  $q->execute([$sid,$ref,$total,(int)$u['id']]);$pr=(int)$pdo->lastInsertId();
+  $received=$body['received_date']??date('Y-m-d');$due=$body['due_date']??date('Y-m-d',strtotime($received.' +'.(int)$supplier['payment_terms_days'].' days'));
+  $q=$pdo->prepare("INSERT INTO purchase_receipts(supplier_id,reference_no,invoice_no,challan_no,received_date,due_date,status,total_amount,created_by) VALUES(?,?,?,?,?,?,'received',?,?)");
+  $q->execute([$sid,$ref,$body['invoice_no']??null,$body['challan_no']??null,$received,$due,$total,(int)$u['id']]);$pr=(int)$pdo->lastInsertId();
   $q=$pdo->prepare("INSERT INTO purchase_items(purchase_receipt_id,product_id,raw_tea_material_id,material_name,quantity_kg,unit_rate,batch_no) VALUES(?,NULL,?,?,?,?,?)");
   $q->execute([$pr,$rid,$rawName,$kg,$rate,$lot?:null]);
   $q=$pdo->prepare("INSERT INTO raw_tea_stock_ledger(raw_tea_material_id,movement_type,qty_kg,unit_cost,reference_type,reference_id,batch_no,created_by) VALUES(?,'purchase_in',?,?,'purchase_receipt',?,?,?)");
