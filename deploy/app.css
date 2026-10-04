@@ -61,3 +61,26 @@ td b{font-size:12px}
 .loginCard>p{font-size:12px}
 @media(max-width:1100px){.app{grid-template-columns:230px 1fr}.hero h1,.moduleHead h1{font-size:24px}}
 @media(max-width:720px){body{font-size:14px}header{height:64px}.hero{padding:20px}.hero h1,.moduleHead h1{font-size:23px}.hero p,.moduleHead p{font-size:13px}nav button,.logout{font-size:13px}.field{font-size:12px}th{font-size:10px}td{font-size:12px}.loginCard{padding:24px}}
+/* compact-page-top-v5 */
+main{padding:0 26px 32px}
+header{height:56px;margin-bottom:8px}
+header h2{font-size:21px;margin-top:2px}
+header small{font-size:9px}
+.moduleHead{padding:0 2px 10px}
+.moduleHead h1{font-size:24px;margin:4px 0 4px}
+.moduleHead p{font-size:12px;line-height:1.45}
+.hero{padding:20px 24px;margin-top:0}
+.stats{margin:12px 0}
+.compactHead{padding-top:8px;margin-top:10px}
+@media(max-width:1100px){
+  main{padding:0 20px 28px}
+  header{height:54px;margin-bottom:8px}
+  .moduleHead{padding:0 2px 9px}
+}
+@media(max-width:720px){
+  main{padding:0 12px 24px}
+  header{height:52px;margin-bottom:7px}
+  .moduleHead{padding:0 0 8px}
+  .moduleHead h1{font-size:22px}
+  .hero{padding:18px;margin-top:0}
+}
