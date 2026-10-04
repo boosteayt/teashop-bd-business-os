@@ -10,3 +10,5 @@ backups/
 *.sql.gz
 *.zip
 .DS_Store
+
+error_log
