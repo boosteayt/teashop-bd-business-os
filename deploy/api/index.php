@@ -483,34 +483,102 @@ if($route==='settlement.paid' && $method==='POST'){
 
 if($route==='suppliers'){
  auth();
- $rows=$pdo->query("SELECT s.id,s.name,s.phone,s.email,s.address,s.active,
-  COALESCE((SELECT SUM(pr.total_amount) FROM purchase_receipts pr WHERE pr.supplier_id=s.id AND pr.status='received'),0) purchases,
-  COALESCE((SELECT SUM(sp.amount) FROM supplier_payments sp WHERE sp.supplier_id=s.id),0) payments
-  FROM suppliers s WHERE s.supplier_type='tea' ORDER BY s.name")->fetchAll();
- foreach($rows as &$row){$row['balance']=round((float)$row['purchases']-(float)$row['payments'],2);} unset($row);
+ $type=(string)($_GET['type']??'all');
+ $where=in_array($type,['tea','packaging','logistics','other'],true)?" WHERE s.supplier_type=".$pdo->quote($type):'';
+ $rows=$pdo->query("SELECT s.id,s.supplier_type,s.name,s.contact_person,s.phone,s.email,s.address,s.payment_terms_days,s.credit_limit,s.opening_balance,s.active,
+  COALESCE((SELECT SUM(pr.total_amount) FROM purchase_receipts pr WHERE pr.supplier_id=s.id AND pr.status='received'),0) tea_purchases,
+  COALESCE((SELECT SUM(ppr.total_amount) FROM packaging_purchase_receipts ppr WHERE ppr.supplier_id=s.id AND ppr.status='received'),0) packaging_purchases,
+  COALESCE((SELECT SUM(sp.amount) FROM supplier_payments sp WHERE sp.supplier_id=s.id),0) payments,
+  COALESCE((SELECT SUM(sr.amount) FROM supplier_returns sr WHERE sr.supplier_id=s.id),0) returns
+  FROM suppliers s".$where." ORDER BY s.supplier_type,s.name")->fetchAll();
+ foreach($rows as &$row){
+  $row['purchases']=round((float)$row['tea_purchases']+(float)$row['packaging_purchases'],2);
+  $row['balance']=round((float)$row['opening_balance']+$row['purchases']-(float)$row['payments']-(float)$row['returns'],2);
+ } unset($row);
  out(['ok'=>true,'suppliers'=>$rows]);
 }
 
 if($route==='supplier.create' && $method==='POST'){
  csrf(); $u=auth();
  if(!in_array($u['role'],['OWNER','WAREHOUSE','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
- $name=trim((string)($body['name']??'')); if($name==='') out(['ok'=>false,'code'=>'INVALID_SUPPLIER'],422);
- $q=$pdo->prepare("INSERT INTO suppliers(supplier_type,name,phone,email,address,active) VALUES('tea',?,?,?,?,1)");
- try{$q->execute([$name,$body['phone']??null,$body['email']??null,$body['address']??null]);}
+ $name=trim((string)($body['name']??''));$type=(string)($body['supplier_type']??'tea');
+ if($name===''||!in_array($type,['tea','packaging','logistics','other'],true)) out(['ok'=>false,'code'=>'INVALID_SUPPLIER'],422);
+ $q=$pdo->prepare("INSERT INTO suppliers(supplier_type,name,contact_person,phone,email,address,payment_terms_days,credit_limit,opening_balance,active) VALUES(?,?,?,?,?,?,?,?,?,1)");
+ try{$q->execute([$type,$name,$body['contact_person']??null,$body['phone']??null,$body['email']??null,$body['address']??null,(int)($body['payment_terms_days']??0),(float)($body['credit_limit']??0),(float)($body['opening_balance']??0)]);}
  catch(Throwable $e){out(['ok'=>false,'code'=>'SUPPLIER_CREATE_FAILED'],422);}
- $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','supplier',(string)$id,['name'=>$name]);
+ $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','supplier',(string)$id,['name'=>$name,'supplier_type'=>$type]);
  out(['ok'=>true,'id'=>$id],201);
 }
 
 if($route==='supplier.payment.create' && $method==='POST'){
  csrf(); $u=auth();
  if(!in_array($u['role'],['OWNER','FINANCE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
- $sid=(int)($body['supplier_id']??0); $amount=(float)($body['amount']??0);
+ $sid=(int)($body['supplier_id']??0);$amount=(float)($body['amount']??0);
  if($sid<=0||$amount<=0) out(['ok'=>false,'code'=>'INVALID_SUPPLIER_PAYMENT'],422);
- $q=$pdo->prepare("INSERT INTO supplier_payments(supplier_id,payment_date,amount,payment_method,reference_no,memo,created_by) VALUES(?,CURDATE(),?,?,?,?,?)");
- $q->execute([$sid,$amount,$body['payment_method']??'bank',$body['reference_no']??null,$body['memo']??null,(int)$u['id']]);
+ $q=$pdo->prepare("INSERT INTO supplier_payments(supplier_id,payment_date,amount,payment_method,reference_no,memo,created_by) VALUES(?,COALESCE(?,CURDATE()),?,?,?,?,?)");
+ $date=$body['payment_date']??null;
+ $q->execute([$sid,$date,$amount,$body['payment_method']??'bank',$body['reference_no']??null,$body['memo']??null,(int)$u['id']]);
  $id=(int)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','supplier_payment',(string)$id,['supplier_id'=>$sid,'amount'=>$amount]);
  out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='supplier.return.create' && $method==='POST'){
+ csrf(); $u=auth();
+ if(!in_array($u['role'],['OWNER','FINANCE','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $sid=(int)($body['supplier_id']??0);$amount=(float)($body['amount']??0);$type=(string)($body['source_type']??'other');
+ if($sid<=0||$amount<=0||!in_array($type,['tea','packaging','other'],true)) out(['ok'=>false,'code'=>'INVALID_SUPPLIER_RETURN'],422);
+ $q=$pdo->prepare("INSERT INTO supplier_returns(supplier_id,return_date,source_type,amount,reference_no,memo,created_by) VALUES(?,COALESCE(?,CURDATE()),?,?,?,?,?)");
+ $q->execute([$sid,$body['return_date']??null,$type,$amount,$body['reference_no']??null,$body['memo']??null,(int)$u['id']]);
+ $id=(int)$pdo->lastInsertId();audit($pdo,(int)$u['id'],'create','supplier_return',(string)$id,['supplier_id'=>$sid,'amount'=>$amount,'source_type'=>$type]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='supplier.ledger'){
+ auth();$sid=(int)($_GET['supplier_id']??0);if($sid<=0)out(['ok'=>false,'code'=>'INVALID_SUPPLIER'],422);
+ $q=$pdo->prepare("SELECT * FROM (
+   SELECT CONCAT('RT-',pr.id) row_id,pr.received_date entry_date,'Raw tea purchase' entry_type,pr.reference_no reference_no,pr.total_amount debit,0 credit
+   FROM purchase_receipts pr WHERE pr.supplier_id=? AND pr.status='received'
+   UNION ALL
+   SELECT CONCAT('PK-',ppr.id),ppr.received_date,'Packaging purchase',ppr.reference_no,ppr.total_amount,0
+   FROM packaging_purchase_receipts ppr WHERE ppr.supplier_id=? AND ppr.status='received'
+   UNION ALL
+   SELECT CONCAT('PM-',sp.id),sp.payment_date,'Payment',sp.reference_no,0,sp.amount
+   FROM supplier_payments sp WHERE sp.supplier_id=?
+   UNION ALL
+   SELECT CONCAT('RTN-',sr.id),sr.return_date,CONCAT(UPPER(sr.source_type),' return'),sr.reference_no,0,sr.amount
+   FROM supplier_returns sr WHERE sr.supplier_id=?
+ ) x ORDER BY entry_date DESC,row_id DESC");
+ $q->execute([$sid,$sid,$sid,$sid]);$rows=$q->fetchAll();
+ $sq=$pdo->prepare("SELECT opening_balance FROM suppliers WHERE id=?");$sq->execute([$sid]);$opening=(float)$sq->fetchColumn();
+ $balance=$opening;foreach(array_reverse($rows) as $r){$balance+=(float)$r['debit']-(float)$r['credit'];}
+ out(['ok'=>true,'opening_balance'=>$opening,'closing_balance'=>round($balance,2),'ledger'=>$rows]);
+}
+
+if($route==='supplier.report'){
+ auth();
+ $suppliers=$pdo->query("SELECT id,supplier_type,name,opening_balance FROM suppliers WHERE active=1 ORDER BY supplier_type,name")->fetchAll();
+ $report=[];$today=new DateTimeImmutable('today');
+ foreach($suppliers as $srow){
+  $sid=(int)$srow['id'];
+  $q=$pdo->prepare("SELECT entry_date,due_date,amount FROM (
+    SELECT received_date entry_date,COALESCE(due_date,received_date) due_date,total_amount amount FROM purchase_receipts WHERE supplier_id=? AND status='received'
+    UNION ALL
+    SELECT received_date,COALESCE(due_date,received_date),total_amount FROM packaging_purchase_receipts WHERE supplier_id=? AND status='received'
+  ) x ORDER BY entry_date ASC");
+  $q->execute([$sid,$sid]);$invoices=$q->fetchAll();
+  $q=$pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM supplier_payments WHERE supplier_id=?");$q->execute([$sid]);$paid=(float)$q->fetchColumn();
+  $q=$pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM supplier_returns WHERE supplier_id=?");$q->execute([$sid]);$returns=(float)$q->fetchColumn();
+  $credits=$paid+$returns;$aging=['current'=>0.0,'d0_30'=>0.0,'d31_60'=>0.0,'d61_90'=>0.0,'d90_plus'=>max(0,(float)$srow['opening_balance'])];$purchases=0.0;
+  foreach($invoices as $inv){
+   $amount=(float)$inv['amount'];$purchases+=$amount;
+   $apply=min($credits,$amount);$credits-=$apply;$remain=$amount-$apply;if($remain<=0)continue;
+   $due=new DateTimeImmutable($inv['due_date']);$days=(int)$due->diff($today)->format('%r%a');
+   if($days<0)$aging['current']+=$remain;elseif($days<=30)$aging['d0_30']+=$remain;elseif($days<=60)$aging['d31_60']+=$remain;elseif($days<=90)$aging['d61_90']+=$remain;else$aging['d90_plus']+=$remain;
+  }
+  $balance=round((float)$srow['opening_balance']+$purchases-$paid-$returns,2);
+  $report[]=['id'=>$sid,'supplier_type'=>$srow['supplier_type'],'name'=>$srow['name'],'purchases'=>round($purchases,2),'payments'=>round($paid,2),'returns'=>round($returns,2),'balance'=>$balance]+$aging;
+ }
+ out(['ok'=>true,'report'=>$report]);
 }
 
 if($route==='rawtea'){
