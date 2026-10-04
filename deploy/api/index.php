@@ -165,35 +165,136 @@ if($route==='production.create' && $method==='POST'){
  }catch(Throwable $e){out(['ok'=>false,'code'=>'PRODUCTION_CREATE_FAILED'],422);}
 }
 
+if($route==='packaging.materials'){
+ auth();
+ $rows=$pdo->query("SELECT pm.id,pm.code,pm.name,pm.unit,pm.reorder_level,pm.active,
+  COALESCE(SUM(CASE WHEN psl.movement_type IN('opening','purchase_in','adjustment_in') THEN psl.qty WHEN psl.movement_type IN('production_out','return_out','damage_out','adjustment_out') THEN -psl.qty ELSE 0 END),0) stock_qty,
+  COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) avg_rate
+  FROM packaging_materials pm
+  LEFT JOIN packaging_stock_ledger psl ON psl.packaging_material_id=pm.id
+  GROUP BY pm.id,pm.code,pm.name,pm.unit,pm.reorder_level,pm.active,pm.unit_cost
+  ORDER BY pm.name")->fetchAll();
+ foreach($rows as &$row){$row['stock_value']=round((float)$row['stock_qty']*(float)$row['avg_rate'],2);$row['low_stock']=(float)$row['stock_qty']<=(float)$row['reorder_level']?1:0;}unset($row);
+ out(['ok'=>true,'materials'=>$rows]);
+}
+
+if($route==='packaging.material.create' && $method==='POST'){
+ csrf();$u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $name=trim((string)($body['name']??''));$unit=trim((string)($body['unit']??'pcs'));if($name==='')out(['ok'=>false,'code'=>'INVALID_PACKAGING_MATERIAL'],422);
+ $code=trim((string)($body['code']??''));if($code==='')$code='PKM-'.date('ymdHis').'-'.random_int(10,99);
+ try{
+  $q=$pdo->prepare("INSERT INTO packaging_materials(code,name,unit,unit_cost,stock_qty,reorder_level,active) VALUES(?,?,?,0,0,?,1)");
+  $q->execute([$code,$name,$unit,(float)($body['reorder_level']??0)]);
+ }catch(Throwable $e){out(['ok'=>false,'code'=>'PACKAGING_MATERIAL_CREATE_FAILED'],422);}
+ $id=(int)$pdo->lastInsertId();audit($pdo,(int)$u['id'],'create','packaging_material',(string)$id,['code'=>$code,'name'=>$name,'unit'=>$unit]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='packaging.purchase.create' && $method==='POST'){
+ csrf();$u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $sid=(int)($body['supplier_id']??0);$mid=(int)($body['packaging_material_id']??0);$qty=(float)($body['qty']??0);$rate=(float)($body['rate']??0);$lot=trim((string)($body['batch_no']??''));
+ if($sid<=0||$mid<=0||$qty<=0||$rate<0)out(['ok'=>false,'code'=>'INVALID_PACKAGING_PURCHASE'],422);
+ $sq=$pdo->prepare("SELECT id,payment_terms_days FROM suppliers WHERE id=? AND supplier_type='packaging' AND active=1");$sq->execute([$sid]);$supplier=$sq->fetch();if(!$supplier)out(['ok'=>false,'code'=>'SUPPLIER_NOT_FOUND'],404);
+ $mq=$pdo->prepare("SELECT name FROM packaging_materials WHERE id=? AND active=1");$mq->execute([$mid]);if(!$mq->fetchColumn())out(['ok'=>false,'code'=>'PACKAGING_MATERIAL_NOT_FOUND'],404);
+ $received=$body['received_date']??date('Y-m-d');$due=$body['due_date']??date('Y-m-d',strtotime($received.' +'.(int)$supplier['payment_terms_days'].' days'));
+ $ref='PGRN-'.date('ymdHis').'-'.random_int(100,999);$total=round($qty*$rate,2);
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare("INSERT INTO packaging_purchase_receipts(supplier_id,reference_no,invoice_no,challan_no,received_date,due_date,status,total_amount,created_by) VALUES(?,?,?,?,?,?,'received',?,?)");
+  $q->execute([$sid,$ref,$body['invoice_no']??null,$body['challan_no']??null,$received,$due,$total,(int)$u['id']]);$pr=(int)$pdo->lastInsertId();
+  $q=$pdo->prepare("INSERT INTO packaging_purchase_items(packaging_purchase_receipt_id,packaging_material_id,quantity,unit_rate,line_total,batch_no) VALUES(?,?,?,?,?,?)");
+  $q->execute([$pr,$mid,$qty,$rate,$total,$lot?:null]);
+  $q=$pdo->prepare("INSERT INTO packaging_stock_ledger(packaging_material_id,movement_type,qty,unit_cost,reference_type,reference_id,batch_no,created_by) VALUES(?,'purchase_in',?,?,'packaging_purchase',?,?,?)");
+  $q->execute([$mid,$qty,$rate,$pr,$lot?:null,(int)$u['id']]);
+  $q=$pdo->prepare("UPDATE packaging_materials SET unit_cost=? WHERE id=?");$q->execute([$rate,$mid]);
+  $pdo->commit();audit($pdo,(int)$u['id'],'create','packaging_purchase',(string)$pr,['supplier_id'=>$sid,'material_id'=>$mid,'qty'=>$qty,'rate'=>$rate]);
+  out(['ok'=>true,'id'=>$pr,'reference_no'=>$ref,'total_amount'=>$total],201);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'PACKAGING_PURCHASE_FAILED'],422);}
+}
+
+if($route==='packaging.bom'){
+ auth();$pid=(int)($_GET['product_id']??0);$grams=(int)($_GET['grams']??0);
+ if($pid<=0||$grams<=0)out(['ok'=>false,'code'=>'INVALID_PACK'],422);
+ $q=$pdo->prepare("SELECT pp.id pack_id,pm.id material_id,pm.name,pm.unit,b.qty_per_pack,
+   COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) unit_cost
+  FROM product_packs pp
+  LEFT JOIN product_packaging_bom b ON b.product_pack_id=pp.id
+  LEFT JOIN packaging_materials pm ON pm.id=b.packaging_material_id
+  WHERE pp.product_id=? AND pp.grams=? ORDER BY pm.name");
+ $q->execute([$pid,$grams]);$rows=$q->fetchAll();
+ out(['ok'=>true,'bom'=>array_values(array_filter($rows,fn($r)=>!empty($r['material_id'])))]);
+}
+
 if($route==='packaging'){
  $u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
- $rows=$pdo->query("SELECT pj.id,pj.job_no,p.name product,pp.grams pack,pj.pack_qty qty,(pp.grams*pj.pack_qty) grams,pj.batch_no,pj.labour_cost,pj.sealing_cost,pj.other_cost,pj.completed_at FROM packaging_jobs pj JOIN product_packs pp ON pp.id=pj.product_pack_id JOIN products p ON p.id=pp.product_id ORDER BY pj.id DESC LIMIT 300")->fetchAll();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $rows=$pdo->query("SELECT pj.id,pj.job_no,p.name product,pp.grams pack,pj.pack_qty qty,(pp.grams*pj.pack_qty) grams,pj.batch_no,pj.labour_cost,pj.sealing_cost,pj.other_cost,pj.completed_at,
+  COALESCE((SELECT SUM(psl.qty*psl.unit_cost) FROM packaging_stock_ledger psl WHERE psl.reference_type='packaging_job' AND psl.reference_id=pj.id AND psl.movement_type='production_out'),0) material_cost
+  FROM packaging_jobs pj JOIN product_packs pp ON pp.id=pj.product_pack_id JOIN products p ON p.id=pp.product_id ORDER BY pj.id DESC LIMIT 300")->fetchAll();
  out(['ok'=>true,'packaging'=>$rows]);
 }
 
 if($route==='packaging.create' && $method==='POST'){
- csrf(); $u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
- $pid=(int)($body['product_id']??0); $grams=(int)($body['grams']??0); $qty=(int)($body['qty']??0); $batch=trim((string)($body['batch_no']??''));
- $labour=(float)($body['labour_cost']??0); $sealing=(float)($body['sealing_cost']??0); $other=(float)($body['other_cost']??0); $mrp=(float)($body['mrp']??0);
+ csrf();$u=auth();
+ if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $pid=(int)($body['product_id']??0);$grams=(int)($body['grams']??0);$qty=(int)($body['qty']??0);$batch=trim((string)($body['batch_no']??''));
+ $labour=(float)($body['labour_cost']??0);$sealing=(float)($body['sealing_cost']??0);$other=(float)($body['other_cost']??0);$mrp=(float)($body['mrp']??0);$bom=$body['bom']??null;
  $pq=$pdo->prepare('SELECT category FROM products WHERE id=? AND active=1');$pq->execute([$pid]);$category=$pq->fetchColumn();
- if(!$category||$qty<=0||$mrp<=0) out(['ok'=>false,'code'=>'INVALID_PACKAGING'],422);
- $allowed=$category==='CTC / Black Tea'?[250,500,1000,2000,5000]:[30,50,100,200,250];
- if(!in_array($grams,$allowed,true)) out(['ok'=>false,'code'=>'INVALID_PACK_SIZE'],422);
+ if(!$category||$qty<=0||$mrp<=0)out(['ok'=>false,'code'=>'INVALID_PACKAGING'],422);
+ $allowed=$category==='CTC / Black Tea'?[250,500,1000,2000,5000]:[30,50,100,200,250];if(!in_array($grams,$allowed,true))out(['ok'=>false,'code'=>'INVALID_PACK_SIZE'],422);
  $pdo->beginTransaction();
  try{
   $q=$pdo->prepare('SELECT id FROM product_packs WHERE product_id=? AND grams=? LIMIT 1');$q->execute([$pid,$grams]);$packId=$q->fetchColumn();
-  if(!$packId){$q=$pdo->prepare('INSERT INTO product_packs(product_id,grams,mrp,active) VALUES(?,?,?,1)');$q->execute([$pid,$grams,$mrp]);$packId=$pdo->lastInsertId();}
-  elseif($mrp>0){$q=$pdo->prepare('UPDATE product_packs SET mrp=? WHERE id=?');$q->execute([$mrp,$packId]);}
+  if(!$packId){$q=$pdo->prepare('INSERT INTO product_packs(product_id,grams,mrp,active) VALUES(?,?,?,1)');$q->execute([$pid,$grams,$mrp]);$packId=(int)$pdo->lastInsertId();}else{$packId=(int)$packId;$q=$pdo->prepare('UPDATE product_packs SET mrp=? WHERE id=?');$q->execute([$mrp,$packId]);}
+  if(is_array($bom)){
+   $pdo->prepare('DELETE FROM product_packaging_bom WHERE product_pack_id=?')->execute([$packId]);
+   $bi=$pdo->prepare('INSERT INTO product_packaging_bom(product_pack_id,packaging_material_id,qty_per_pack) VALUES(?,?,?)');
+   foreach($bom as $row){$mid=(int)($row['packaging_material_id']??0);$per=(float)($row['qty_per_pack']??0);if($mid>0&&$per>0)$bi->execute([$packId,$mid,$per]);}
+  }
+  $bq=$pdo->prepare("SELECT b.packaging_material_id,b.qty_per_pack,pm.name,
+    COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=b.packaging_material_id AND ppi.unit_rate>0),pm.unit_cost,0) unit_cost
+   FROM product_packaging_bom b JOIN packaging_materials pm ON pm.id=b.packaging_material_id WHERE b.product_pack_id=?");
+  $bq->execute([$packId]);$bomRows=$bq->fetchAll();
+  foreach($bomRows as $row){
+   $need=(float)$row['qty_per_pack']*$qty;
+   $sq=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','purchase_in','adjustment_in') THEN qty WHEN movement_type IN('production_out','return_out','damage_out','adjustment_out') THEN -qty ELSE 0 END),0) FROM packaging_stock_ledger WHERE packaging_material_id=?");
+   $sq->execute([(int)$row['packaging_material_id']]);$available=(float)$sq->fetchColumn();
+   if($need>$available+0.00001)throw new RuntimeException('INSUFFICIENT_PACKAGING_MATERIAL:'.$row['name']);
+  }
   $job='PKG-'.date('ymdHis').'-'.random_int(100,999);
   $q=$pdo->prepare('INSERT INTO packaging_jobs(job_no,product_pack_id,batch_no,pack_qty,labour_cost,sealing_cost,other_cost,completed_at,created_by) VALUES(?,?,?,?,?,?,?,NOW(),?)');
   $q->execute([$job,$packId,$batch?:null,$qty,$labour,$sealing,$other,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+  foreach($bomRows as $row){
+   $need=(float)$row['qty_per_pack']*$qty;
+   $q=$pdo->prepare("INSERT INTO packaging_stock_ledger(packaging_material_id,movement_type,qty,unit_cost,reference_type,reference_id,batch_no,created_by) VALUES(?,'production_out',?,?,'packaging_job',?,?,?)");
+   $q->execute([(int)$row['packaging_material_id'],$need,(float)$row['unit_cost'],$id,$batch?:null,(int)$u['id']]);
+  }
   $q=$pdo->prepare("INSERT INTO inventory_ledger(location_type,location_id,product_pack_id,movement_type,qty,unit_value,reference_type,reference_id,batch_no,created_by) VALUES('central',NULL,?,'production_in',?,?,?,?,?,?)");
   $q->execute([$packId,$qty,$mrp,'packaging_job',$id,$batch?:null,(int)$u['id']]);
-  $pdo->commit(); audit($pdo,(int)$u['id'],'create','packaging_job',(string)$id,['job_no'=>$job,'product_id'=>$pid,'grams'=>$grams,'qty'=>$qty]);
+  $pdo->commit();audit($pdo,(int)$u['id'],'create','packaging_job',(string)$id,['job_no'=>$job,'product_id'=>$pid,'grams'=>$grams,'qty'=>$qty,'bom_items'=>count($bomRows)]);
   out(['ok'=>true,'id'=>$id,'job_no'=>$job],201);
- }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'PACKAGING_CREATE_FAILED'],422);}
+ }catch(Throwable $e){
+  if($pdo->inTransaction())$pdo->rollBack();
+  if(str_starts_with($e->getMessage(),'INSUFFICIENT_PACKAGING_MATERIAL:'))out(['ok'=>false,'code'=>'INSUFFICIENT_PACKAGING_MATERIAL','material'=>substr($e->getMessage(),31)],422);
+  out(['ok'=>false,'code'=>'PACKAGING_CREATE_FAILED'],422);
+ }
+}
+
+if($route==='packaging.report'){
+ auth();
+ $materials=$pdo->query("SELECT pm.name,pm.unit,pm.reorder_level,
+  COALESCE(SUM(CASE WHEN psl.movement_type IN('opening','purchase_in','adjustment_in') THEN psl.qty WHEN psl.movement_type IN('production_out','return_out','damage_out','adjustment_out') THEN -psl.qty ELSE 0 END),0) stock_qty,
+  COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) avg_rate
+  FROM packaging_materials pm LEFT JOIN packaging_stock_ledger psl ON psl.packaging_material_id=pm.id
+  GROUP BY pm.id,pm.name,pm.unit,pm.reorder_level,pm.unit_cost ORDER BY pm.name")->fetchAll();
+ foreach($materials as &$m){$m['stock_value']=round((float)$m['stock_qty']*(float)$m['avg_rate'],2);$m['low_stock']=(float)$m['stock_qty']<=(float)$m['reorder_level']?1:0;}unset($m);
+ $totalPurchases=(float)$pdo->query("SELECT COALESCE(SUM(total_amount),0) FROM packaging_purchase_receipts WHERE status='received'")->fetchColumn();
+ $consumed=(float)$pdo->query("SELECT COALESCE(SUM(qty*unit_cost),0) FROM packaging_stock_ledger WHERE movement_type='production_out'")->fetchColumn();
+ $stockValue=array_sum(array_map(fn($x)=>(float)$x['stock_value'],$materials));
+ $supplier=$pdo->query("SELECT s.name supplier,COUNT(p.id) receipts,COALESCE(SUM(p.total_amount),0) purchases FROM suppliers s LEFT JOIN packaging_purchase_receipts p ON p.supplier_id=s.id AND p.status='received' WHERE s.supplier_type='packaging' GROUP BY s.id,s.name ORDER BY purchases DESC")->fetchAll();
+ out(['ok'=>true,'materials'=>$materials,'total_purchases'=>$totalPurchases,'consumed_value'=>$consumed,'stock_value'=>$stockValue,'suppliers'=>$supplier]);
 }
 
 if($route==='inventory'){
