@@ -178,7 +178,7 @@ if($route==='packaging.materials'){
  auth();
  $rows=$pdo->query("SELECT pm.id,pm.code,pm.name,pm.unit,pm.reorder_level,pm.active,
   COALESCE(SUM(CASE WHEN psl.movement_type IN('opening','purchase_in','adjustment_in') THEN psl.qty WHEN psl.movement_type IN('production_out','return_out','damage_out','adjustment_out') THEN -psl.qty ELSE 0 END),0) stock_qty,
-  COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) avg_rate
+  COALESCE((SELECT SUM(ppi.quantity*ppi.unit_rate)/NULLIF(SUM(ppi.quantity),0) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) avg_rate
   FROM packaging_materials pm
   LEFT JOIN packaging_stock_ledger psl ON psl.packaging_material_id=pm.id
   GROUP BY pm.id,pm.code,pm.name,pm.unit,pm.reorder_level,pm.active,pm.unit_cost
@@ -227,7 +227,7 @@ if($route==='packaging.bom'){
  auth();$pid=(int)($_GET['product_id']??0);$grams=(int)($_GET['grams']??0);
  if($pid<=0||$grams<=0)out(['ok'=>false,'code'=>'INVALID_PACK'],422);
  $q=$pdo->prepare("SELECT pp.id pack_id,pm.id material_id,pm.name,pm.unit,b.qty_per_pack,
-   COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) unit_cost
+   COALESCE((SELECT SUM(ppi.quantity*ppi.unit_rate)/NULLIF(SUM(ppi.quantity),0) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) unit_cost
   FROM product_packs pp
   LEFT JOIN product_packaging_bom b ON b.product_pack_id=pp.id
   LEFT JOIN packaging_materials pm ON pm.id=b.packaging_material_id
@@ -263,7 +263,7 @@ if($route==='packaging.create' && $method==='POST'){
    foreach($bom as $row){$mid=(int)($row['packaging_material_id']??0);$per=(float)($row['qty_per_pack']??0);if($mid>0&&$per>0)$bi->execute([$packId,$mid,$per]);}
   }
   $bq=$pdo->prepare("SELECT b.packaging_material_id,b.qty_per_pack,pm.name,
-    COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=b.packaging_material_id AND ppi.unit_rate>0),pm.unit_cost,0) unit_cost
+    COALESCE((SELECT SUM(ppi.quantity*ppi.unit_rate)/NULLIF(SUM(ppi.quantity),0) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=b.packaging_material_id AND ppi.unit_rate>0),pm.unit_cost,0) unit_cost
    FROM product_packaging_bom b JOIN packaging_materials pm ON pm.id=b.packaging_material_id WHERE b.product_pack_id=?");
   $bq->execute([$packId]);$bomRows=$bq->fetchAll();
   foreach($bomRows as $row){
@@ -286,7 +286,7 @@ if($route==='packaging.create' && $method==='POST'){
   out(['ok'=>true,'id'=>$id,'job_no'=>$job],201);
  }catch(Throwable $e){
   if($pdo->inTransaction())$pdo->rollBack();
-  if(str_starts_with($e->getMessage(),'INSUFFICIENT_PACKAGING_MATERIAL:'))out(['ok'=>false,'code'=>'INSUFFICIENT_PACKAGING_MATERIAL','material'=>substr($e->getMessage(),31)],422);
+  if(str_starts_with($e->getMessage(),'INSUFFICIENT_PACKAGING_MATERIAL:')){$parts=explode(':',$e->getMessage(),2);out(['ok'=>false,'code'=>'INSUFFICIENT_PACKAGING_MATERIAL','material'=>$parts[1]??''],422);}
   out(['ok'=>false,'code'=>'PACKAGING_CREATE_FAILED'],422);
  }
 }
@@ -295,7 +295,7 @@ if($route==='packaging.report'){
  auth();
  $materials=$pdo->query("SELECT pm.name,pm.unit,pm.reorder_level,
   COALESCE(SUM(CASE WHEN psl.movement_type IN('opening','purchase_in','adjustment_in') THEN psl.qty WHEN psl.movement_type IN('production_out','return_out','damage_out','adjustment_out') THEN -psl.qty ELSE 0 END),0) stock_qty,
-  COALESCE((SELECT AVG(ppi.unit_rate) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) avg_rate
+  COALESCE((SELECT SUM(ppi.quantity*ppi.unit_rate)/NULLIF(SUM(ppi.quantity),0) FROM packaging_purchase_items ppi WHERE ppi.packaging_material_id=pm.id AND ppi.unit_rate>0),pm.unit_cost,0) avg_rate
   FROM packaging_materials pm LEFT JOIN packaging_stock_ledger psl ON psl.packaging_material_id=pm.id
   GROUP BY pm.id,pm.name,pm.unit,pm.reorder_level,pm.unit_cost ORDER BY pm.name")->fetchAll();
  foreach($materials as &$m){$m['stock_value']=round((float)$m['stock_qty']*(float)$m['avg_rate'],2);$m['low_stock']=(float)$m['stock_qty']<=(float)$m['reorder_level']?1:0;}unset($m);
@@ -660,7 +660,9 @@ if($route==='supplier.ledger'){
  ) x ORDER BY entry_date DESC,row_id DESC");
  $q->execute([$sid,$sid,$sid,$sid]);$rows=$q->fetchAll();
  $sq=$pdo->prepare("SELECT opening_balance FROM suppliers WHERE id=?");$sq->execute([$sid]);$opening=(float)$sq->fetchColumn();
- $balance=$opening;foreach(array_reverse($rows) as $r){$balance+=(float)$r['debit']-(float)$r['credit'];}
+ $asc=array_reverse($rows);$balance=$opening;
+ foreach($asc as &$r){$balance+=(float)$r['debit']-(float)$r['credit'];$r['balance']=round($balance,2);}unset($r);
+ $rows=array_reverse($asc);
  out(['ok'=>true,'opening_balance'=>$opening,'closing_balance'=>round($balance,2),'ledger'=>$rows]);
 }
 
@@ -695,7 +697,7 @@ if($route==='rawtea'){
  auth();
  $rows=$pdo->query("SELECT r.id,r.code,r.name,r.tea_type,r.origin,r.active,
   COALESCE(SUM(CASE WHEN l.movement_type IN('opening','purchase_in','adjustment_in') THEN l.qty_kg WHEN l.movement_type IN('blend_out','return_out','adjustment_out') THEN -l.qty_kg ELSE 0 END),0) stock_kg,
-  COALESCE((SELECT AVG(pi.unit_rate) FROM purchase_items pi WHERE pi.raw_tea_material_id=r.id AND pi.unit_rate>0),0) avg_rate
+  COALESCE((SELECT SUM(pi.quantity_kg*pi.unit_rate)/NULLIF(SUM(pi.quantity_kg),0) FROM purchase_items pi WHERE pi.raw_tea_material_id=r.id AND pi.unit_rate>0),0) avg_rate
   FROM raw_tea_materials r
   LEFT JOIN raw_tea_stock_ledger l ON l.raw_tea_material_id=r.id
   GROUP BY r.id,r.code,r.name,r.tea_type,r.origin,r.active
@@ -763,7 +765,7 @@ if($route==='blend.create' && $method==='POST'){
   $rid=(int)($item['raw_tea_material_id']??0);$kg=(float)($item['kg']??0);if($rid<=0||$kg<=0)out(['ok'=>false,'code'=>'INVALID_BLEND_COMPONENT'],422);
   $sq=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','purchase_in','adjustment_in') THEN qty_kg WHEN movement_type IN('blend_out','return_out','adjustment_out') THEN -qty_kg ELSE 0 END),0) FROM raw_tea_stock_ledger WHERE raw_tea_material_id=?");
   $sq->execute([$rid]);$available=(float)$sq->fetchColumn();if($kg>$available+0.00001)out(['ok'=>false,'code'=>'INSUFFICIENT_RAW_TEA','raw_tea_material_id'=>$rid,'available'=>$available],422);
-  $cq=$pdo->prepare("SELECT COALESCE(AVG(unit_rate),0) FROM purchase_items WHERE raw_tea_material_id=? AND unit_rate>0");$cq->execute([$rid]);$cost=(float)$cq->fetchColumn();
+  $cq=$pdo->prepare("SELECT COALESCE(SUM(quantity_kg*unit_rate)/NULLIF(SUM(quantity_kg),0),0) FROM purchase_items WHERE raw_tea_material_id=? AND unit_rate>0");$cq->execute([$rid]);$cost=(float)$cq->fetchColumn();
   $input+=$kg;$normalized[]=['id'=>$rid,'kg'=>$kg,'cost'=>$cost];
  }
  if($output>$input+0.00001) out(['ok'=>false,'code'=>'OUTPUT_EXCEEDS_INPUT'],422);
