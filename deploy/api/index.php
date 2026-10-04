@@ -83,6 +83,31 @@ if($route==='logout' && $method==='POST'){
 }
 if($route==='me') out(['ok'=>true,'user'=>auth(),'csrf'=>$_SESSION['csrf']??null]);
 
+if($route==='password.change' && $method==='POST'){
+ csrf(); $u=auth();
+ $current=(string)($body['current_password']??'');
+ $next=(string)($body['new_password']??'');
+ if(strlen($next)<10) out(['ok'=>false,'code'=>'PASSWORD_TOO_SHORT'],422);
+ if(!preg_match('/[A-Z]/',$next) || !preg_match('/[a-z]/',$next) || !preg_match('/[0-9]/',$next)){
+  out(['ok'=>false,'code'=>'PASSWORD_WEAK'],422);
+ }
+ $q=$pdo->prepare('SELECT password_hash FROM users WHERE id=? AND active=1');
+ $q->execute([(int)$u['id']]); $hash=$q->fetchColumn();
+ if(!$hash || !password_verify($current,(string)$hash)) out(['ok'=>false,'code'=>'CURRENT_PASSWORD_INVALID'],401);
+ if(password_verify($next,(string)$hash)) out(['ok'=>false,'code'=>'PASSWORD_REUSED'],422);
+ $q=$pdo->prepare('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?');
+ $q->execute([password_hash($next,PASSWORD_DEFAULT),(int)$u['id']]);
+ $_SESSION['user']['must_change_password']=0;
+ audit($pdo,(int)$u['id'],'password_change','user',(string)$u['id']);
+ out(['ok'=>true,'user'=>$_SESSION['user'],'csrf'=>$_SESSION['csrf']]);
+}
+
+if($route==='users'){
+ owner();
+ $rows=$pdo->query('SELECT u.id,u.name,u.email,u.active,u.must_change_password,r.code role,r.name role_name,u.created_at FROM users u JOIN roles r ON r.id=u.role_id ORDER BY u.id')->fetchAll();
+ out(['ok'=>true,'users'=>$rows]);
+}
+
 if($route==='products'){
  auth();
  $rows=$pdo->query('SELECT id,sku,name,category,purchase_cost_per_kg,active FROM products ORDER BY category,name')->fetchAll();
