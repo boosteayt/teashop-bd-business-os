@@ -1,9 +1,10 @@
-name: Build
+name: Manual Build Check
+
+# Intentionally manual: cPanel deploys the buildless React runtime directly.
+# This avoids consuming GitHub Actions minutes on every commit.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
