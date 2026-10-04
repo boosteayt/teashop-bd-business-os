@@ -6,7 +6,7 @@ ROOT="/home/${CPUSER}"
 REPO="${ROOT}/repositories/teashop-bd-business-os"
 LIVE="${ROOT}/teashop.bd"
 CONFIG="${ROOT}/teashop-os-config.php"
-MIGRATION="${REPO}/database/migrations/2026_10_05_procurement_v2.sql"
+MIGRATOR="${REPO}/server/migrate-procurement-v2.php"
 
 PHPCLI="/opt/cpanel/ea-php82/root/usr/bin/php"
 if [ ! -x "$PHPCLI" ]; then
@@ -17,31 +17,10 @@ fi
 
 [ -x "$PHPCLI" ] || { echo "ERROR: PHP CLI not found"; exit 1; }
 [ -f "$CONFIG" ] || { echo "ERROR: secure DB config not found"; exit 1; }
-[ -f "$MIGRATION" ] || { echo "ERROR: procurement migration not found"; exit 1; }
-command -v mysql >/dev/null 2>&1 || { echo "ERROR: mysql client not found"; exit 1; }
+[ -f "$MIGRATOR" ] || { echo "ERROR: procurement migrator not found"; exit 1; }
 
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
-chmod 600 "$TMP"
-
-TSB_CONFIG="$CONFIG" TSB_MY_CNF="$TMP" "$PHPCLI" <<'PHP'
-<?php
-$c=require getenv('TSB_CONFIG');
-$dsn=$c['dsn']??'';
-if(!preg_match('/host=([^;]+)/',$dsn,$hm) || !preg_match('/dbname=([^;]+)/',$dsn,$dm)){
-    fwrite(STDERR,"ERROR: invalid DB config\n"); exit(2);
-}
-$esc=function($v){ return str_replace(['\\\\','"'],['\\\\\\\\','\\"'],(string)$v); };
-$txt="[client]\n".
-     'host="'.$esc($hm[1])."\"\n".
-     'user="'.$esc($c['user'])."\"\n".
-     'password="'.$esc($c['pass'])."\"\n".
-     'database="'.$esc($dm[1])."\"\n";
-file_put_contents(getenv('TSB_MY_CNF'),$txt,LOCK_EX);
-PHP
-
-echo "Applying procurement v2 migration..."
-mysql --defaults-extra-file="$TMP" < "$MIGRATION"
+echo "Applying idempotent procurement v2 migration..."
+"$PHPCLI" "$MIGRATOR"
 
 echo "Linting production API..."
 "$PHPCLI" -l "${REPO}/deploy/api/index.php"
@@ -56,8 +35,18 @@ echo "Deploying live files..."
 cp -a "${REPO}/deploy/." "${LIVE}/"
 
 echo
-echo "=== DB OBJECTS ==="
-mysql --defaults-extra-file="$TMP" -N -e "SELECT CONCAT('suppliers=',COUNT(*)) FROM suppliers; SELECT CONCAT('raw_tea_materials=',COUNT(*)) FROM raw_tea_materials; SELECT CONCAT('packaging_materials=',COUNT(*)) FROM packaging_materials; SELECT CONCAT('supplier_tables=',COUNT(*)) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('supplier_payments','supplier_returns','packaging_purchase_receipts','packaging_purchase_items','packaging_stock_ledger','product_packaging_bom','raw_tea_stock_ledger','production_batch_inputs');"
+echo "=== DB VERIFY ==="
+"$PHPCLI" <<'PHP'
+<?php
+$c=require getenv('HOME').'/teashop-os-config.php';
+$p=new PDO($c['dsn'],$c['user'],$c['pass'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+$tables=['supplier_payments','supplier_returns','raw_tea_materials','raw_tea_stock_ledger','production_batch_inputs','packaging_purchase_receipts','packaging_purchase_items','packaging_stock_ledger','product_packaging_bom'];
+$in="'".implode("','",$tables)."'";
+echo "procurement_tables=".$p->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ({$in})")->fetchColumn().PHP_EOL;
+echo "suppliers=".$p->query("SELECT COUNT(*) FROM suppliers")->fetchColumn().PHP_EOL;
+echo "raw_tea_materials=".$p->query("SELECT COUNT(*) FROM raw_tea_materials")->fetchColumn().PHP_EOL;
+echo "packaging_materials=".$p->query("SELECT COUNT(*) FROM packaging_materials")->fetchColumn().PHP_EOL;
+PHP
 
 echo
 echo "=== HEAD ==="
