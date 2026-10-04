@@ -43,8 +43,28 @@ if(user===undefined)return h(Loading);
 if(!user)return h(Login,{onLogin:u=>{setUser(u);setPage(u.role==='CASHIER'?'POS':'Overview')}});
 if(Number(user.must_change_password)===1)return h(ChangePassword,{user,onDone:u=>setUser(u),onLogout:logout});
 const allowed=access[user.role]||['Overview'];if(!allowed.includes(page))setTimeout(()=>setPage(allowed[0]),0);
-return h('div',{className:'app'},h('aside',null,h('div',{className:'brand'},h('div',{className:'logo small'},'T'),h('div',null,h('b',null,'Tea Shop BD'),h('span',null,'Business OS'))),h('div',{className:'rolebox'},h('small',null,'SECURE SESSION'),h('b',null,user.name),h('span',null,user.role_name||user.role)),h('nav',null,allowed.map(n=>h('button',{key:n,className:n===page?'active':'',onClick:()=>setPage(n)},n))),h('button',{className:'logout',onClick:logout},'Sign out')),
-h('main',null,h('header',null,h('div',null,h('small',null,'TEA SHOP BD / '+page.toUpperCase()),h('h2',null,page)),h('div',{className:'headerRight'},h(Pill,{kind:'success'},'LIVE DATABASE'),h('div',{className:'avatar'},user.name.split(' ').map(x=>x[0]).slice(0,2).join('')))),h(Page,{page,user,state,setState})))}
+const groups=[
+ ['Workspace',['Overview','Pricing Engine']],
+ ['Supply & Production',['Suppliers','Purchase & Raw Tea','Blending & QC','Packaging & Rebuild','Inventory']],
+ ['Distribution',['Franchises','POS']],
+ ['Finance & Control',['Settlements','Finance & P&L','Reports']],
+ ['Security',['Users & Access']]
+];
+const initials=user.name.split(' ').map(x=>x[0]).slice(0,2).join('');
+return h('div',{className:'app'},
+ h('aside',null,
+  h('div',{className:'brand'},h('div',{className:'logo small'},'T'),h('div',null,h('b',null,'Tea Shop BD'),h('span',null,'Business Workspace'))),
+  h('div',{className:'rolebox'},h('div',{className:'roleAvatar'},initials),h('div',{className:'roleMeta'},h('b',null,user.name),h('span',null,user.role_name||user.role)),h('i',{className:'onlineDot'})),
+  h('nav',null,groups.map(([label,items])=>{const visible=items.filter(x=>allowed.includes(x));if(!visible.length)return null;return h('div',{className:'navGroup',key:label},h('small',null,label),visible.map(n=>h('button',{key:n,className:n===page?'active':'',onClick:()=>setPage(n)},h('span',{className:'navMark'}),h('span',null,n))))})),
+  h('button',{className:'logout',onClick:logout},'Sign out')
+ ),
+ h('main',null,
+  h('header',null,
+   h('div',{className:'topCrumb'},h('span',null,'Tea Shop BD'),h('i',null,'/'),h('b',null,page)),
+   h('div',{className:'headerRight'},h(Pill,{kind:'success'},'LIVE'),h('span',{className:'topRole'},user.role_name||user.role),h('div',{className:'avatar'},initials))
+  ),
+  h('div',{className:'pageCanvas'},h(Page,{page,user,state,setState}))
+ ))}
 function Page({page,user,state,setState}){const p={ 'Overview':Overview,'Pricing Engine':Pricing,'Suppliers':Suppliers,'Purchase & Raw Tea':Purchases,'Blending & QC':Production,'Packaging & Rebuild':Packaging,'Inventory':Inventory,'Franchises':Franchises,'POS':POS,'Settlements':Settlements,'Finance & P&L':Finance,'Reports':Reports,'Users & Access':Users}[page]||Overview;return h(p,{user,state,setState})}
 function Overview(){const[data,setData]=React.useState(null),[error,setError]=React.useState('');
 React.useEffect(()=>{api('dashboard').then(setData).catch(()=>setError('Live dashboard could not be loaded.'))},[]);
