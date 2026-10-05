@@ -549,6 +549,149 @@ function QCWastage(){
 
 
 
+
+function OperationsRound3View({mode,data,onRefresh,user,period,setPeriod}){
+ const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
+ const outlets=data.outlets||[];
+ const[approval,setApproval]=React.useState({franchise_id:'',approval_type:'margin_exception',reason:'',amount:0,requested_value:'',evidence_ref:''});
+ const[evidence,setEvidence]=React.useState({franchise_id:'',evidence_type:'visit_evidence',title:'',evidence_ref:''});
+ const[route,setRoute]=React.useState({franchise_id:'',target_role_code:'OWNER',severity:'warning',title:'',message:''});
+ const[handover,setHandover]=React.useState({franchise_id:'',handover_status:'preparing',stock_status:'pending',dues_status:'pending',documents_status:'pending',evidence_ref:'',note:''});
+ async function act(fn,success){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ function select(label,value,onChange,items){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},items.map(x=>h('option',{key:String(x.value??x),value:x.value??x},x.label??String(x).replaceAll('_',' ')))))}
+ function outletSelect(value,onChange){return select('Outlet',value,onChange,[{value:'',label:'Select outlet'},...outlets.map(x=>({value:x.id,label:x.code+' · '+x.name}))])}
+ const m=data.metrics||{};
+ const stats=h('div',{className:'stats opsV3Stats'},
+  h(Card,{t:'Benchmarked outlets',v:String(m.benchmarked_outlets||0),s:'Network comparison'}),
+  h(Card,{t:'Forecast attention',v:String((m.watch_forecast||0)+(m.critical_forecast||0)),s:String(m.critical_forecast||0)+' critical'}),
+  h(Card,{t:'Pending approvals',v:String(m.pending_approvals||0),s:String(m.ready_handovers||0)+' handovers ready'}),
+  h(Card,{t:'Evidence vault',v:String(m.evidence_items||0),s:String(m.routed_notifications||0)+' routed notices'})
+ );
+ let body=null;
+
+ if(mode==='benchmarkv3'){
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Outlet Benchmarking',tag:'DISTRICT + NETWORK'}),
+    h('p',{className:'muted'},'Benchmark index = sales vs district 40% + outlet health 25% + stock rotation 20% + settlement discipline 15%.'),
+    h(DataTable,{rows:data.benchmarks||[],cols:[['network_rank','Rank'],['outlet_code','Code'],['outlet','Outlet'],['district','District'],['sales_30d','30d sales',money],['district_avg_sales','District avg',money],['sales_index','Sales index'],['health_score','Health'],['stock_rotation_score','Rotation'],['settlement_score','Settlement'],['benchmark_index','Benchmark'],['target_achievement','Target %',v=>Number(v||0).toFixed(1)+'%']],empty:'No outlets available for benchmarking.'})
+   )
+  );
+ }else if(mode==='forecastv3'){
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Outlet Health Forecast',tag:'7-DAY / 30-DAY'}),
+    h('p',{className:'muted'},'Forward-looking operational risk from POS inactivity, alerts, settlements, complaints, overdue tasks and current outlet health. This is an operational forecast, not a financial prediction.'),
+    h(DataTable,{rows:data.forecast||[],cols:[['forecast_30d','30d'],['risk_score_30d','Risk'],['forecast_7d','7d'],['outlet_code','Code'],['outlet','Outlet'],['district','District'],['inactive_days','POS idle days'],['drivers','Drivers']],empty:'No live outlet forecast signals.'})
+   )
+  );
+ }else if(mode==='performancev3'){
+  const rows=data.performance||[];const latest=rows[0]||{},prev=rows[1]||{};const delta=Number(latest.total_score||0)-Number(prev.total_score||0);
+  body=h(React.Fragment,null,stats,
+   h('div',{className:'stats opsV3Perf'},
+    h(Card,{t:'Latest score',v:Number(latest.total_score||0).toFixed(2),s:latest.period_end||'No period'}),
+    h(Card,{t:'Score movement',v:(delta>=0?'+':'')+delta.toFixed(2),s:'vs previous period'}),
+    h(Card,{t:'Latest share',v:money(latest.performance_share_amount||0),s:Number(latest.performance_share_percent||0).toFixed(2)+'%'}),
+    h(Card,{t:'Latest status',v:String(latest.status||'none').toUpperCase(),s:'Owner / Finance workflow'})
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Operations Performance Trend',tag:'MANAGEMENT REVIEW'}),
+    h(DataTable,{rows,cols:[['period_end','Period'],['sales_growth_score','Sales'],['stock_rotation_score','Stock'],['outlet_health_score','Health'],['settlement_score','Settlement'],['retention_score','Retention'],['compliance_score','Compliance'],['total_score','Total'],['distributable_profit','Operational profit',money],['performance_share_amount','Share',money],['status','Status'],['approved_by_name','Approved by']],empty:'No Operations performance periods generated yet.'})
+   )
+  );
+ }else if(mode==='approvalsv3'){
+  async function request(){if(!approval.franchise_id||!approval.reason)return;await act(async()=>{await api('operations.approval.request',{method:'POST',body:{...approval,franchise_id:Number(approval.franchise_id),amount:Number(approval.amount||0)}});setApproval({...approval,reason:'',amount:0,requested_value:'',evidence_ref:''})},'Owner approval requested')}
+  async function decide(r,status){await act(()=>api('operations.approval.decide',{method:'POST',body:{id:Number(r.id),status,decision_note:status==='approved'?'Approved from Management Closure':'Rejected from Management Closure'}}),'Approval '+status)}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Approval Queue',tag:'OPERATIONS REQUEST → OWNER DECISION'}),
+    h('div',{className:'formgrid opsV3Form'},outletSelect(approval.franchise_id,v=>setApproval({...approval,franchise_id:v})),
+     select('Request type',approval.approval_type,v=>setApproval({...approval,approval_type:v}),['margin_exception','stock_adjustment','outlet_suspension','special_discount','exception_expense','closure_approval']),
+     h(Field,{label:'Amount / value',type:'number',value:approval.amount,onChange:v=>setApproval({...approval,amount:v})}),
+     h(Field,{label:'Requested value / detail',value:approval.requested_value,onChange:v=>setApproval({...approval,requested_value:v})}),
+     h(Field,{label:'Evidence ref',value:approval.evidence_ref,onChange:v=>setApproval({...approval,evidence_ref:v})}),
+     h(Field,{label:'Reason',value:approval.reason,onChange:v=>setApproval({...approval,reason:v})})
+    ),
+    h('button',{className:'primary fit',disabled:busy||!approval.franchise_id||!approval.reason,onClick:request},busy?'Submitting…':'Request Owner approval')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Management approvals',tag:'CONTROLLED'}),
+    h(DataTable,{rows:data.approvals||[],cols:[['status','Status'],['created_at','Requested'],['outlet','Outlet'],['approval_type','Type'],['requested_by_name','Requested by'],['assigned_role_code','Owner'],['decision_note','Decision'],['decided_by_name','Decided by'],['actions','Action',(_,r)=>user.role==='OWNER'&&r.status==='pending'?h('div',{className:'actionRow'},h('button',{className:'miniBtn',disabled:busy,onClick:()=>decide(r,'approved')},'Approve'),h('button',{className:'miniBtn dangerLite',disabled:busy,onClick:()=>decide(r,'rejected')},'Reject')):'—']],empty:'No management approval requests yet.'})
+   )
+  );
+ }else if(mode==='evidencev3'){
+  async function save(){if(!evidence.franchise_id||!evidence.title||!evidence.evidence_ref)return;await act(async()=>{await api('operations.evidence.save',{method:'POST',body:{...evidence,franchise_id:Number(evidence.franchise_id)}});setEvidence({...evidence,title:'',evidence_ref:''})},'Evidence registered')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Evidence & Documents Vault',tag:'REFERENCE REGISTRY'}),
+    h('div',{className:'formgrid opsV3Form'},outletSelect(evidence.franchise_id,v=>setEvidence({...evidence,franchise_id:v})),
+     select('Evidence type',evidence.evidence_type,v=>setEvidence({...evidence,evidence_type:v}),['visit_evidence','settlement_proof','compliance_evidence','closure_handover','marketing_proof','training_certificate','other']),
+     h(Field,{label:'Title',value:evidence.title,onChange:v=>setEvidence({...evidence,title:v})}),
+     h(Field,{label:'File / evidence reference',value:evidence.evidence_ref,onChange:v=>setEvidence({...evidence,evidence_ref:v})})
+    ),
+    h('button',{className:'primary fit',disabled:busy||!evidence.franchise_id||!evidence.title||!evidence.evidence_ref,onClick:save},busy?'Saving…':'Register evidence')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Evidence registry',tag:'AUDITABLE'}),
+    h(DataTable,{rows:data.evidence||[],cols:[['created_at','Created'],['outlet_code','Code'],['outlet','Outlet'],['document_type','Type'],['title','Title'],['evidence_ref','Reference'],['created_by_name','Created by'],['status','Status']],empty:'No Operations evidence registered yet.'})
+   )
+  );
+ }else if(mode==='managementreportv3'){
+  async function snapshot(){await act(()=>api('operations.management.snapshot',{method:'POST',body:{period}}),'Management snapshot saved')}
+  function exportCsv(){const rows=data.benchmarks||[],keys=['network_rank','outlet_code','outlet','division','district','sales_30d','district_avg_sales','sales_index','health_score','stock_rotation_score','settlement_score','benchmark_index','target_achievement'];const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';const csv=[keys.join(','),...rows.map(r=>keys.map(k=>esc(r[k])).join(','))].join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='TeaShopBD_Management_Closure_'+period+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),500)}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel opsV3Print'},h(Title,{t:'Monthly Management Closure Report',tag:period}),
+    h('div',{className:'reportActions'},h('label',{className:'field'},'Period',h('input',{type:'month',value:period,onChange:e=>setPeriod(e.target.value)})),h('button',{className:'miniBtn',onClick:exportCsv},'Export CSV'),h('button',{className:'miniBtn',onClick:()=>window.print()},'Print / Save PDF'),['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'primary fit',disabled:busy,onClick:snapshot},'Save snapshot'):null),
+    h('div',{className:'pnlStrip'},
+     h('div',null,h('span',null,'Benchmarked outlets'),h('b',null,String(m.benchmarked_outlets||0))),
+     h('div',null,h('span',null,'Critical forecast'),h('b',null,String(m.critical_forecast||0))),
+     h('div',null,h('span',null,'Pending approvals'),h('b',null,String(m.pending_approvals||0))),
+     h('div',null,h('span',null,'Evidence'),h('b',null,String(m.evidence_items||0))),
+     h('div',null,h('span',null,'Ready handovers'),h('b',null,String(m.ready_handovers||0)))
+    ),
+    h(DataTable,{rows:(data.benchmarks||[]).slice(0,20),cols:[['network_rank','Rank'],['outlet','Outlet'],['district','District'],['sales_30d','Sales',money],['health_score','Health'],['benchmark_index','Benchmark'],['target_achievement','Target %',v=>Number(v||0).toFixed(1)+'%']],empty:'No management benchmark data.'})
+   )
+  );
+ }else if(mode==='mobileactionv3'){
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Mobile / PWA Action Center',tag:'WHAT NEEDS ATTENTION NOW'}),
+    h('p',{className:'muted'},'Compact action queue for Operations mobile use. Critical health forecast, Owner approvals and closure handovers are surfaced first.'),
+    h(DataTable,{rows:data.actions||[],cols:[['priority','Priority'],['action_type','Type'],['outlet','Outlet'],['title','Action'],['detail','Detail']],empty:'No management actions are waiting.'})
+   )
+  );
+ }else if(mode==='routingv3'){
+  async function send(){if(!route.title||!route.message)return;await act(async()=>{await api('operations.notification.route',{method:'POST',body:{...route,franchise_id:route.franchise_id?Number(route.franchise_id):0}});setRoute({...route,title:'',message:''})},'Notification routed')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Notification Routing',tag:'OWNER / FINANCE / OPERATIONS'}),
+    h('div',{className:'formgrid opsV3Form'},outletSelect(route.franchise_id,v=>setRoute({...route,franchise_id:v})),
+     select('Target role',route.target_role_code,v=>setRoute({...route,target_role_code:v}),['OWNER','FINANCE','OPERATIONS']),
+     select('Severity',route.severity,v=>setRoute({...route,severity:v}),['info','success','warning','critical']),
+     h(Field,{label:'Title',value:route.title,onChange:v=>setRoute({...route,title:v})}),
+     h(Field,{label:'Message',value:route.message,onChange:v=>setRoute({...route,message:v})})
+    ),
+    h('button',{className:'primary fit',disabled:busy||!route.title||!route.message,onClick:send},busy?'Routing…':'Route notification')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Routing history',tag:'AUDIT'}),
+    h(DataTable,{rows:data.notification_routes||[],cols:[['routed_at','Routed'],['severity','Severity'],['target_role_code','Target'],['outlet','Outlet'],['title','Title'],['message','Message'],['routed_by_name','Routed by'],['route_status','Status']],empty:'No routed management notifications yet.'})
+   )
+  );
+ }else{
+  async function saveHandover(){if(!handover.franchise_id)return;await act(()=>api('operations.closure.handover.save',{method:'POST',body:{...handover,franchise_id:Number(handover.franchise_id)}}),'Closure handover saved')}
+  const statuses=user.role==='OWNER'?['preparing','ready','approved','reopened']:['preparing','ready','reopened'];
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Closure Handover Center',tag:'PREPARE → OWNER APPROVE → FINAL CLOSE'}),
+    h('p',{className:'muted'},'This prepares the management handover. It does not bypass the authoritative 8/8 closure checklist or the Owner-only final Close gate.'),
+    h('div',{className:'formgrid opsV3Form'},outletSelect(handover.franchise_id,v=>setHandover({...handover,franchise_id:v})),
+     select('Handover status',handover.handover_status,v=>setHandover({...handover,handover_status:v}),statuses),
+     select('Stock',handover.stock_status,v=>setHandover({...handover,stock_status:v}),['pending','counted','reconciled','returned']),
+     select('Dues',handover.dues_status,v=>setHandover({...handover,dues_status:v}),['pending','review','reconciled']),
+     select('Documents',handover.documents_status,v=>setHandover({...handover,documents_status:v}),['pending','partial','complete']),
+     h(Field,{label:'Evidence ref',value:handover.evidence_ref,onChange:v=>setHandover({...handover,evidence_ref:v})}),
+     h(Field,{label:'Handover note',value:handover.note,onChange:v=>setHandover({...handover,note:v})})
+    ),
+    ['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'primary fit',disabled:busy||!handover.franchise_id,onClick:saveHandover},busy?'Saving…':'Save handover'):null
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Closure management readiness',tag:'NO BYPASS'}),
+    h(DataTable,{rows:data.closures||[],cols:[['management_readiness','Readiness'],['outlet_code','Code'],['outlet','Outlet'],['status','Outlet status'],['closure_progress','Checklist %'],['stock_value','Stock value',money],['unpaid_settlements','Open settlements'],['document_count','Docs'],['handover_status','Handover'],['stock_status','Stock'],['dues_status','Dues'],['documents_status','Documents'],['approved_at','Owner approval']],empty:'No outlet closure records.'})
+   )
+  );
+ }
+ return h(React.Fragment,null,msg?h('div',{className:'notice'},h('b',null,'Operations V2 Round 3'),h('span',null,msg)):null,body);
+}
+
 function OperationsRound2View({mode,data,onRefresh,user}){
  const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
  const outlets=data.outlets||[],assignees=data.assignees||[],settlements=data.settlements||[];
@@ -748,25 +891,26 @@ function OperationsRound1View({mode,data,onRefresh,user}){
 }
 
 function OperationsWorkspace({user}){
- const[data,setData]=React.useState(null),[round1,setRound1]=React.useState(null),[round2,setRound2]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[alerts,setAlerts]=React.useState(null),[perf,setPerf]=React.useState(null),[perfHistory,setPerfHistory]=React.useState([]),[report,setReport]=React.useState(null),[security,setSecurity]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('commandv2'),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7));
+ const[data,setData]=React.useState(null),[round1,setRound1]=React.useState(null),[round2,setRound2]=React.useState(null),[round3,setRound3]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[alerts,setAlerts]=React.useState(null),[perf,setPerf]=React.useState(null),[perfHistory,setPerfHistory]=React.useState([]),[report,setReport]=React.useState(null),[security,setSecurity]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('commandv2'),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7));
  async function load(){
   try{
    await api('operations.alerts.refresh',{method:'POST',body:{}});
-   const[a,b,c,d,e,f,g,h,i,j]=await Promise.all([
+   const[a,b,c,d,e,f,g,h,i,j,k]=await Promise.all([
     api('operations.dashboard'),api('franchise.territory'),api('operations.workboard'),api('operations.intelligence'),
-    api('operations.alerts'),api('operations.performance.preview?period='+encodeURIComponent(period)),api('operations.performance.history'),api('operations.network.report?period='+encodeURIComponent(period)),api('operations.round1'),api('operations.round2')
+    api('operations.alerts'),api('operations.performance.preview?period='+encodeURIComponent(period)),api('operations.performance.history'),api('operations.network.report?period='+encodeURIComponent(period)),api('operations.round1'),api('operations.round2'),api('operations.round3?period='+encodeURIComponent(period))
    ]);
-   setData(a);setTerritory(b);setWork(c);setIntel(d);setAlerts(e);setPerf(f.preview||null);setPerfHistory(g.records||[]);setReport(h);setRound1(i);setRound2(j);
+   setData(a);setTerritory(b);setWork(c);setIntel(d);setAlerts(e);setPerf(f.preview||null);setPerfHistory(g.records||[]);setReport(h);setRound1(i);setRound2(j);setRound3(k);
    if(['OWNER','OPERATIONS'].includes(user.role)){try{setSecurity(await api('operations.security.audit'))}catch{}}
   }catch(e){setMsg('Operations data could not be loaded: '+(e.code||'ERROR'))}
  }
  React.useEffect(()=>{load()},[period]);
- if(!data||!round1||!round2||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
+ if(!data||!round1||!round2||!round3||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const tabs=[['commandv2','Regional Command'],['dailycheckin','Daily Check-in'],['visitplanner','Visit Planner'],['renewals','Renewals'],['launchwar','Launch War Room'],['automationv2','Auto Tasks'],['targetsv2','Target Breakdown'],['reorderv2','Reorder Center'],['settlementfollowup','Settlement Follow-up'],['riskcenter','Risk Center'],['customercare','Customer Care'],['trainingcompliance','Training Compliance'],['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
+ const tabs=[['commandv2','Regional Command'],['dailycheckin','Daily Check-in'],['visitplanner','Visit Planner'],['renewals','Renewals'],['launchwar','Launch War Room'],['automationv2','Auto Tasks'],['targetsv2','Target Breakdown'],['reorderv2','Reorder Center'],['settlementfollowup','Settlement Follow-up'],['riskcenter','Risk Center'],['customercare','Customer Care'],['trainingcompliance','Training Compliance'],['benchmarkv3','Benchmarking'],['forecastv3','Health Forecast'],['performancev3','Performance+'],['approvalsv3','Approval Queue'],['evidencev3','Evidence Vault'],['managementreportv3','Management Report'],['mobileactionv3','Mobile Actions'],['routingv3','Notification Routing'],['closurev3','Closure Handover'],['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
  let body=null;
  if(['commandv2','dailycheckin','visitplanner','renewals','launchwar'].includes(tab))body=h(OperationsRound1View,{mode:tab,data:round1,onRefresh:load,user});
  else if(['automationv2','targetsv2','reorderv2','settlementfollowup','riskcenter','customercare','trainingcompliance'].includes(tab))body=h(OperationsRound2View,{mode:tab,data:round2,onRefresh:load,user});
+ else if(['benchmarkv3','forecastv3','performancev3','approvalsv3','evidencev3','managementreportv3','mobileactionv3','routingv3','closurev3'].includes(tab))body=h(OperationsRound3View,{mode:tab,data:round3,onRefresh:load,user,period,setPeriod});
  else if(tab==='network'){
   body=h(React.Fragment,null,
    h('div',{className:'stats'},
@@ -783,7 +927,7 @@ function OperationsWorkspace({user}){
  else if(['alerts','performance','reports','security'].includes(tab))body=h(OperationsPatch4View,{mode:tab,alerts,perf,perfHistory,report,security,period,setPeriod,onRefresh:load,user});
  else body=h(OperationsPatch2View,{mode:tab,work,onRefresh:load,user});
  return h(React.Fragment,null,
-  h('section',{className:'moduleHead'},h('small',null,'OPERATIONS COMMAND CENTER V2 · ROUND 2'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Regional execution plus automated tasks, target pacing, reorder intelligence, settlement follow-up, risk control, customer care and training compliance.')),
+  h('section',{className:'moduleHead'},h('small',null,'OPERATIONS COMMAND CENTER V2 · ROUND 3'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Regional execution, automation, benchmarking, health forecast, management approvals, evidence, reports, notification routing and Owner-controlled closure handover.')),
   msg?h('div',{className:'authError'},msg):null,
   h('div',{className:'opsTabs'},tabs.map(([k,l])=>h('button',{key:k,className:tab===k?'active':'',onClick:()=>setTab(k)},l))),
   body
