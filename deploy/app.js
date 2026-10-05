@@ -80,7 +80,7 @@ return h('div',{className:'app'},
   h('div',{className:'pageCanvas'},h(Page,{page,user,state,setState}))
  ))}
 function Page({page,user,state,setState}){const p={
- 'Dashboard':Overview,
+ 'Dashboard':user?.role==='OPERATIONS'?OperationsDashboard:Overview,
  'Tea':TeaHub,
  'Purchase & Suppliers':PurchaseHub,
  'Blending & Production':Production,
@@ -107,6 +107,53 @@ function Page({page,user,state,setState}){const p={
  'Audit Log':()=>h(RecordsWorkspace,{module:'audit',title:'Audit Log',desc:'Who changed what, when and from where.'}),
  'Settings':SettingsWorkspace
 }[page]||Overview;return h(p,{user,state,setState})}
+function OperationsDashboard(){
+ const[data,setData]=React.useState(null),[error,setError]=React.useState('');
+ React.useEffect(()=>{api('operations.dashboard').then(setData).catch(e=>setError('Operations command center could not be loaded: '+(e.code||'ERROR')))},[]);
+ if(!data)return error?h('div',{className:'authError'},error):h(Loading);
+ const n=data.network||{},s=data.sales||{},st=data.settlement||{},perf=data.performance;
+ const growth=s.growth_percent===null||s.growth_percent===undefined?'New baseline':((Number(s.growth_percent)>=0?'+':'')+Number(s.growth_percent).toFixed(1)+'% vs previous month');
+ return h(React.Fragment,null,
+  h('section',{className:'hero opsHero'},
+   h('div',null,h('small',null,'FRANCHISE & RETAIL OPERATIONS'),h('h1',null,'Network command center.'),h('p',null,'Outlet sales, stock discipline, settlement follow-up, pipeline and performance—without manufacturing or Owner-only controls.')),
+   h('div',{className:'goal'},h('span',null,'NETWORK TARGET'),h('b',null,String(n.active_outlets||0)+' ',h('em',null,'/ 150')),h('small',null,'active outlets'))
+  ),
+  h('div',{className:'stats'},
+   h(Card,{t:'Network sales · this month',v:money(s.current||0),s:growth}),
+   h(Card,{t:'Active outlets',v:String(n.active_outlets||0),s:String(n.pipeline_outlets||0)+' pipeline / setup'}),
+   h(Card,{t:'Needs attention',v:String(n.attention_outlets||0),s:String((data.stock_gaps||[]).length)+' active outlets with no stock value'}),
+   h(Card,{t:'Settlement follow-up',v:money(st.open_amount||0),s:String(st.open_count||0)+' open settlement rows'})
+  ),
+  h('div',{className:'stats opsSecondary'},
+   h(Card,{t:'POS receipts · month',v:String(s.receipts||0),s:'Verified sales source'}),
+   h(Card,{t:'Franchise margin earned',v:money(s.earned_margin||0),s:'25 / 27 / 30 / approved custom'}),
+   h(Card,{t:'Outlet pipeline',v:String(n.pipeline_outlets||0),s:'Pipeline + setup'}),
+   h(Card,{t:'Performance',v:perf?Number(perf.total_score||0).toFixed(1):'—',s:perf?(String(perf.status||'draft').toUpperCase()+' · '+perf.period_start+' → '+perf.period_end):'Awaiting approved scorecard'})
+  ),
+  h('div',{className:'twocol'},
+   h('section',{className:'panel'},h(Title,{t:'Low-performing active outlets',tag:'30-DAY SALES'}),h(DataTable,{rows:data.low_performers||[],cols:[['code','Code'],['name','Outlet'],['district','District'],['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health']],empty:'No active outlet performance data yet.'})),
+   h('section',{className:'panel'},h(Title,{t:'Settlement follow-up',tag:'OPEN'}),h(DataTable,{rows:data.settlements_due||[],cols:[['outlet','Outlet'],['period_end','Period end'],['verified_sales','Verified sales',money],['earned_margin','Margin',money],['net_payable','Net payable',money],['status','Status']],empty:'No open settlements.'}))
+  ),
+  h('div',{className:'twocol'},
+   h('section',{className:'panel'},h(Title,{t:'Stock gaps',tag:'OUTLET ACTION'}),h(DataTable,{rows:data.stock_gaps||[],cols:[['code','Code'],['name','Outlet'],['district','District'],['stock_value','Stock value',money],['last_sale_at','Last sale']],empty:'No active outlet currently has a zero stock value.'})),
+   h('section',{className:'panel'},h(Title,{t:'Role performance',tag:'P&L-BASED'}),perf?
+    h('div',{className:'opsScore'},
+     h('div',null,h('span',null,'Score'),h('b',null,Number(perf.total_score||0).toFixed(1))),
+     h('div',null,h('span',null,'Share rate'),h('b',null,Number(perf.performance_share_percent||0).toFixed(2)+'%')),
+     h('div',null,h('span',null,'Share amount'),h('b',null,money(perf.performance_share_amount||0))),
+     h('div',null,h('span',null,'Status'),h('b',null,String(perf.status||'draft').toUpperCase()))
+    ):h(Empty,{text:'No performance period has been approved yet.'})
+   )
+  ),
+  h('section',{className:'panel roleScope'},
+   h(Title,{t:'Authority boundary',tag:'ROLE CONTROL'}),
+   h('div',{className:'scopeGrid'},
+    h('div',null,h('b',null,'Operational control'),h('p',null,'Outlet pipeline, launch, sales monitoring, stock follow-up, settlement follow-up, territory, customers, logistics and network reports.')),
+    h('div',null,h('b',null,'Owner-controlled'),h('p',null,'Tea sourcing, blend formula authority, production/QC approval, pricing policy, margin override, company finance, users, audit and system settings.'))
+   )
+  )
+ );
+}
 function Overview(){const[data,setData]=React.useState(null),[error,setError]=React.useState('');
 React.useEffect(()=>{api('dashboard').then(setData).catch(()=>setError('Live dashboard could not be loaded.'))},[]);
 const sales=data?.verified_sales||0,margin=data?.franchise_earned_margin||0,company=data?.company_contribution||0,outlets=data?.active_outlets||0,receipts=data?.receipts||0;
@@ -312,7 +359,29 @@ function QCWastage(){
   h('div',{className:'twocol'},h('section',{className:'panel'},h(Title,{t:'QC checks',tag:'QUALITY'}),qcTable),h('section',{className:'panel'},h(Title,{t:'Wastage & variance',tag:'YIELD'}),wasteTable))
  );
 }
-function OperationsWorkspace(){const[rows,setRows]=React.useState([]),[summary,setSummary]=React.useState(null),[msg,setMsg]=React.useState('');React.useEffect(()=>{Promise.all([api('franchises'),api('reports.summary')]).then(([a,b])=>{setRows(a.franchises||[]);setSummary(b.totals||{})}).catch(()=>setMsg('Operations data could not be loaded.'))},[]);const active=rows.filter(x=>x.status==='active').length,watch=rows.filter(x=>['watch','critical'].includes(x.status)).length;return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Outlet pipeline, sales monitoring, stock follow-up, settlement discipline, territory performance and outlet health.')),msg?h('div',{className:'notice'},msg):null,h('div',{className:'stats'},h(Card,{t:'Active outlets',v:String(active),s:rows.length+' total records'}),h(Card,{t:'Watch / critical',v:String(watch),s:'Needs operating attention'}),h(Card,{t:'Verified network sales',v:money(summary?.sales||0),s:'POS source'}),h(Card,{t:'Earned franchise margin',v:money(summary?.earned_margin||0),s:'25 / 27 / 30 / manual'})),h(DataTable,{rows,cols:[['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['margin_tier','Tier'],['margin_percent','Margin %'],['status','Status']],empty:'No outlet records yet.'}))}
+function OperationsWorkspace(){
+ const[data,setData]=React.useState(null),[msg,setMsg]=React.useState('');
+ React.useEffect(()=>{api('operations.dashboard').then(setData).catch(e=>setMsg('Operations data could not be loaded: '+(e.code||'ERROR')))},[]);
+ if(!data)return msg?h('div',{className:'authError'},msg):h(Loading);
+ const n=data.network||{},s=data.sales||{};
+ return h(React.Fragment,null,
+  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Outlet pipeline, sales monitoring, stock follow-up, settlement discipline, territory performance and outlet health.')),
+  h('div',{className:'stats'},
+   h(Card,{t:'Active outlets',v:String(n.active_outlets||0),s:String(n.total_outlets||0)+' total open records'}),
+   h(Card,{t:'Pipeline / setup',v:String(n.pipeline_outlets||0),s:'Launch follow-up'}),
+   h(Card,{t:'30-day / current sales',v:money(s.current||0),s:String(s.receipts||0)+' receipts this month'}),
+   h(Card,{t:'Attention outlets',v:String(n.attention_outlets||0),s:'Watch + critical'})
+  ),
+  h('section',{className:'panel'},h(Title,{t:'Outlet operations table',tag:'LIVE'}),h(DataTable,{rows:data.outlets||[],cols:[
+   ['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['status','Status'],['margin_percent','Margin %'],
+   ['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health'],['last_sale_at','Last sale']
+  ],empty:'No outlet records yet.'})),
+  h('div',{className:'twocol'},
+   h('section',{className:'panel'},h(Title,{t:'Low performers',tag:'FOLLOW-UP'}),h(DataTable,{rows:data.low_performers||[],cols:[['name','Outlet'],['district','District'],['sales_30d','30d sales',money],['stock_value','Stock value',money],['health','Health']],empty:'No active outlets to rank yet.'})),
+   h('section',{className:'panel'},h(Title,{t:'Open settlements',tag:'COLLECTION'}),h(DataTable,{rows:data.settlements_due||[],cols:[['outlet','Outlet'],['period_end','Period'],['net_payable','Payable',money],['status','Status']],empty:'No open settlement follow-up.'}))
+  )
+ );
+}
 function RecordsWorkspace({module,title,desc}){
  const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState('');
  React.useEffect(()=>{api('workspace.records?module='+encodeURIComponent(module)).then(r=>setRows(r.records||[])).catch(e=>setMsg('This workspace could not be loaded: '+(e.code||'ERROR')))},[module]);
