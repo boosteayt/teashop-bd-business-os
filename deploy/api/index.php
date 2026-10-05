@@ -681,6 +681,16 @@ if($route==='operations.dashboard'){
    WHERE pr.role_code='OPERATIONS'
    ORDER BY pr.period_end DESC,pr.id DESC LIMIT 1")->fetch() ?: null;
 
+ $work=$pdo->query("SELECT
+   (SELECT COUNT(*) FROM operations_tasks WHERE status NOT IN('done','cancelled')) open_tasks,
+   (SELECT COUNT(*) FROM operations_tasks WHERE status NOT IN('done','cancelled') AND due_at IS NOT NULL AND due_at<NOW()) overdue_tasks,
+   (SELECT COUNT(*) FROM support_tickets WHERE status NOT IN('resolved','closed','cancelled')) open_tickets,
+   (SELECT COUNT(*) FROM support_tickets WHERE status NOT IN('resolved','closed','cancelled') AND due_at IS NOT NULL AND due_at<NOW()) overdue_tickets,
+   (SELECT COUNT(*) FROM field_visits WHERE status='scheduled' AND scheduled_at BETWEEN NOW() AND DATE_ADD(NOW(),INTERVAL 7 DAY)) visits_next_7d,
+   (SELECT COUNT(*) FROM outlet_compliance_checks WHERE status IN('watch','non_compliant') AND resolved_at IS NULL) open_compliance,
+   (SELECT COUNT(*) FROM outlet_training_records WHERE status IN('pending','scheduled','expired') OR (expires_at IS NOT NULL AND expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))) training_attention,
+   (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing")->fetch();
+
  $currentSales=(float)($current['sales']??0);
  $previousSales=(float)($previous['sales']??0);
  $growth=$previousSales>0?round((($currentSales-$previousSales)/$previousSales)*100,2):null;
@@ -704,6 +714,16 @@ if($route==='operations.dashboard'){
    'settlement'=>[
      'open_count'=>(int)($unsettled['rows_count']??0),
      'open_amount'=>(float)($unsettled['amount']??0),
+   ],
+   'work'=>[
+     'open_tasks'=>(int)($work['open_tasks']??0),
+     'overdue_tasks'=>(int)($work['overdue_tasks']??0),
+     'open_tickets'=>(int)($work['open_tickets']??0),
+     'overdue_tickets'=>(int)($work['overdue_tickets']??0),
+     'visits_next_7d'=>(int)($work['visits_next_7d']??0),
+     'open_compliance'=>(int)($work['open_compliance']??0),
+     'training_attention'=>(int)($work['training_attention']??0),
+     'active_marketing'=>(int)($work['active_marketing']??0),
    ],
    'outlets'=>$outlets,
    'low_performers'=>$low,
