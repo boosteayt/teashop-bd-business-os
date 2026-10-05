@@ -634,7 +634,7 @@ function OperationsRound3View({mode,data,onRefresh,user,period,setPeriod}){
   function exportCsv(){const rows=data.benchmarks||[],keys=['network_rank','outlet_code','outlet','division','district','sales_30d','district_avg_sales','sales_index','health_score','stock_rotation_score','settlement_score','benchmark_index','target_achievement'];const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';const csv=[keys.join(','),...rows.map(r=>keys.map(k=>esc(r[k])).join(','))].join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='TeaShopBD_Management_Closure_'+period+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),500)}
   body=h(React.Fragment,null,stats,
    h('section',{className:'panel opsV3Print'},h(Title,{t:'Monthly Management Closure Report',tag:period}),
-    h('div',{className:'reportActions'},h('label',{className:'field'},'Period',h('input',{type:'month',value:period,onChange:e=>setPeriod(e.target.value)})),h('button',{className:'miniBtn',onClick:exportCsv},'Export CSV'),h('button',{className:'miniBtn',onClick:()=>window.print()},'Print / Save PDF'),h('button',{className:'primary fit',disabled:busy,onClick:snapshot},'Save snapshot')),
+    h('div',{className:'reportActions'},h('label',{className:'field'},'Period',h('input',{type:'month',value:period,onChange:e=>setPeriod(e.target.value)})),h('button',{className:'miniBtn',onClick:exportCsv},'Export CSV'),h('button',{className:'miniBtn',onClick:()=>window.print()},'Print / Save PDF'),['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'primary fit',disabled:busy,onClick:snapshot},'Save snapshot'):null),
     h('div',{className:'pnlStrip'},
      h('div',null,h('span',null,'Benchmarked outlets'),h('b',null,String(m.benchmarked_outlets||0))),
      h('div',null,h('span',null,'Critical forecast'),h('b',null,String(m.critical_forecast||0))),
@@ -682,7 +682,7 @@ function OperationsRound3View({mode,data,onRefresh,user,period,setPeriod}){
      h(Field,{label:'Evidence ref',value:handover.evidence_ref,onChange:v=>setHandover({...handover,evidence_ref:v})}),
      h(Field,{label:'Handover note',value:handover.note,onChange:v=>setHandover({...handover,note:v})})
     ),
-    h('button',{className:'primary fit',disabled:busy||!handover.franchise_id,onClick:saveHandover},busy?'Saving…':'Save handover')
+    ['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'primary fit',disabled:busy||!handover.franchise_id,onClick:saveHandover},busy?'Saving…':'Save handover'):null
    ),
    h('section',{className:'panel'},h(Title,{t:'Closure management readiness',tag:'NO BYPASS'}),
     h(DataTable,{rows:data.closures||[],cols:[['management_readiness','Readiness'],['outlet_code','Code'],['outlet','Outlet'],['status','Outlet status'],['closure_progress','Checklist %'],['stock_value','Stock value',money],['unpaid_settlements','Open settlements'],['document_count','Docs'],['handover_status','Handover'],['stock_status','Stock'],['dues_status','Dues'],['documents_status','Documents'],['approved_at','Owner approval']],empty:'No outlet closure records.'})
