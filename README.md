@@ -323,3 +323,29 @@ Round 2 capabilities:
 - Customer Care: customer-category SLA tickets and complaint queue.
 - Training Compliance: active-staff coverage, expired/expiring training and attention queue.
 - Operations authority remains unchanged: no pricing/margin override, company finance administration, user/settings authority, self-approval or final outlet closure authority.
+
+
+## Operations Command Center V2 — Round 3
+Management Closure completes the Operations command layer without granting Owner-only commercial or governance powers to Operations.
+
+Production upgrade:
+`php server/upgrade-operations-v2-round3.php`
+
+Verification:
+`php server/verify-operations-v2-round3.php`
+
+Production E2E:
+`php server/e2e-operations-v2-round3.php`
+
+Round 3 adds:
+- Outlet Benchmarking: district-relative sales, health, stock rotation, settlement discipline and network rank.
+- Outlet Health Forecast: 7-day / 30-day operational risk with visible drivers.
+- Performance+: 12-period Operations score / incentive trend while preserving Owner approval and Finance payment gates.
+- Approval Queue: Operations requests; Owner approves or rejects.
+- Evidence & Documents Vault: auditable outlet-linked evidence references.
+- Monthly Management Closure Report: benchmark summary, CSV export, browser Print / Save PDF and frozen management snapshots.
+- Mobile / PWA Action Center: prioritized forecast, approval and closure actions.
+- Notification Routing: controlled routing to Owner, Finance or Operations with audit history.
+- Closure Handover Center: Operations prepares stock/dues/documents; Owner approves handover. The existing 8/8 closure checklist and Owner-only final Close gate remain authoritative.
+
+Round 3 schema is additive and idempotent. It does not alter the 99 Tea master, pricing, margin authority, accounting logic or final outlet-close authority.
