@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS field_visits (
  overall_score DECIMAL(6,2) NULL,
  findings TEXT NULL,
  corrective_action TEXT NULL,
+ evidence_ref VARCHAR(255) NULL,
  next_visit_at DATETIME NULL,
  created_by BIGINT UNSIGNED NULL,
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
