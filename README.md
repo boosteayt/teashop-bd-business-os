@@ -249,3 +249,25 @@ It reconciles Operations Patch 1–4 schemas, preserves existing Tea/business da
 After deployment, run:
 
 `php server/verify-operations-final.php`
+
+
+## Operations Round 2 production E2E
+Run after Round 1 is GREEN:
+
+`php server/e2e-operations-round2.php`
+
+The harness uses temporary identities, one temporary outlet and one temporary sellable pack while preserving the 99 Tea master count. It validates:
+- stock transfer and Stock Received != Profit
+- verified POS sales at 25%, 27%, 30% and approved custom margin
+- physical stock-count mismatch without automatic ledger adjustment
+- sales targets, stock velocity, low-stock classification and reorder suggestion
+- franchise-scoped settlement generation, formula, aging, Owner lock and Finance paid closure
+- overdue task/ticket escalation and franchise-scoped automatic alert refresh
+- leaderboard / healthy-business score
+- isolated P&L-based Operations performance review, Owner approval and Finance payment
+- regional report, month-end snapshot and CSV export source marker
+- Operations security rules
+- 8/8 closure checklist, Owner-only final close and post-close sale/transfer denial
+- automatic cleanup and residue verification
+
+For production safety, `settlement.generate` now accepts an optional `franchise_id` to generate only one outlet settlement; omitting it preserves the existing all-outlet behavior. `operations.alerts.refresh` likewise accepts an optional `franchise_id` for outlet-scoped refresh.
