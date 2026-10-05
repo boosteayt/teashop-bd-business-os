@@ -421,6 +421,7 @@ if($route==='operations.intelligence'){
    COALESCE((SELECT ost.sales_target FROM outlet_sales_targets ost WHERE ost.franchise_id=f.id AND CURDATE() BETWEEN ost.period_start AND ost.period_end ORDER BY ost.id DESC LIMIT 1),0) sales_target,
    COALESCE((SELECT ost.receipt_target FROM outlet_sales_targets ost WHERE ost.franchise_id=f.id AND CURDATE() BETWEEN ost.period_start AND ost.period_end ORDER BY ost.id DESC LIMIT 1),0) receipt_target
    FROM franchises f WHERE f.status<>'closed' ORDER BY f.name")->fetchAll();
+ $outletMap=[];foreach($outlets as $o)$outletMap[(int)$o['id']]=$o;
 
  $salesRows=$pdo->query("SELECT franchise_id,
    SUM(CASE WHEN sold_at>=DATE_SUB(NOW(),INTERVAL 7 DAY) THEN gross_amount ELSE 0 END) sales_7d,
@@ -474,7 +475,7 @@ if($route==='operations.intelligence'){
   $cnt=$countMap[$key]??null;$mismatch=$cnt && abs((float)$cnt['variance_qty'])>0.001;
   if(isset($summary[$stockStatus]))$summary[$stockStatus]++;if($mismatch)$summary['mismatch']++;$summary['reorder_units']+=$reorder;$summary['reorder_value']+=$reorder*(float)$r['mrp'];
   $inventory[]=[
-   'franchise_id'=>$fid,'product_pack_id'=>$pid,'product'=>$r['product'],'grams'=>(int)$r['grams'],'mrp'=>(float)$r['mrp'],
+   'franchise_id'=>$fid,'outlet_code'=>$outletMap[$fid]['code']??'','outlet'=>$outletMap[$fid]['name']??'','product_pack_id'=>$pid,'product'=>$r['product'],'grams'=>(int)$r['grams'],'mrp'=>(float)$r['mrp'],
    'stock_qty'=>round($stock,3),'sales_qty_7d'=>round($q7,3),'sales_qty_30d'=>round($q30,3),'daily_velocity'=>round($daily,3),
    'days_cover'=>$days,'movement_class'=>$movement,'stock_status'=>$stockStatus,'suggested_reorder_qty'=>$reorder,'suggested_reorder_value'=>round($reorder*(float)$r['mrp'],2),
    'last_sale_at'=>$lastSale,'last_stock_at'=>$r['last_stock_at'],'last_counted_at'=>$cnt['counted_at']??null,'variance_qty'=>$cnt?(float)$cnt['variance_qty']:0,'variance_value'=>$cnt?(float)$cnt['variance_value']:0
@@ -515,7 +516,7 @@ if($route==='operations.intelligence'){
 
  out(['ok'=>true,'period'=>['month_start'=>$monthStart,'today'=>$today],
   'summary'=>['inventory'=>$summary,'no_sale_3d'=>count(array_filter($liveRank,fn($r)=>$r['inactive_days']>=3)),'no_sale_7d'=>count(array_filter($liveRank,fn($r)=>$r['inactive_days']>=7)),'open_settlements'=>count($settlements)],
-  'outlets'=>$rank,'inventory'=>$inventory,'settlements'=>$settlements,'aging'=>$aging,'top'=>$top,'bottom'=>$bottom]);
+  'outlets'=>$liveRank,'inventory'=>$inventory,'settlements'=>$settlements,'aging'=>$aging,'top'=>$top,'bottom'=>$bottom]);
 }
 
 if($route==='operations.target.save' && $method==='POST'){
