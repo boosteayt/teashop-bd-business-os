@@ -335,9 +335,9 @@ function Outlet360({fid,user,onClose,onChanged}){
  async function saveHealth(){await act(()=>api('franchise.health.save',{method:'POST',body:{franchise_id:fid,...healthForm}}))}
  if(!data)return msg?h('div',{className:'authError'},msg):h(Loading);
 
- const f=data.franchise,p=data.profile||{},pl=data.pipeline||{},ch=data.checklists||{},health=data.health_latest;
+ const f=data.franchise,p=data.profile||{},pl=data.pipeline||{},ch=data.checklists||{},health=data.health_latest,ops=data.operations||{};
  const stages=['lead','verification','agreement','shop_ready','training','stock_ready','pos_ready','launch','live'].concat(user.role==='OWNER'?['suspended','closed']:[]);
- const tabs=[['overview','Overview'],['opening','Opening'],['people','People & Training'],['documents','Documents'],['health','Health'],['closure','Closure'],['timeline','Timeline']];
+ const tabs=[['overview','Overview'],['opening','Opening'],['people','People & Training'],['documents','Documents'],['health','Health'],['dailyops','Daily Ops'],['closure','Closure'],['timeline','Timeline']];
  function checklist(type){
   const rows=ch[type]||[],progress=ch[type+'_progress']||0;
   const items=h('div',{className:'checklist'},rows.map(x=>h('button',{key:x.id,className:Number(x.completed)?'done':'',disabled:busy||!canField,onClick:()=>toggleCheck(x)},h('i',null,Number(x.completed)?'✓':'○'),h('span',null,x.item_label),h('small',null,x.required?'Required':'Optional'))));
@@ -406,6 +406,30 @@ function Outlet360({fid,user,onClose,onChanged}){
   const current=h('section',{className:'panel'},h(Title,{t:'Outlet health score',tag:health?String(health.health).toUpperCase():'NEW'}),score,inputs);
   const history=h('section',{className:'panel'},h(Title,{t:'Health history',tag:'TREND'}),h(DataTable,{rows:data.health_history||[],cols:[['checked_at','Checked'],['total_score','Score'],['health','Health'],['sales_score','Sales'],['stock_score','Stock'],['settlement_score','Settlement'],['compliance_score','Compliance']],empty:'No health history yet.'}));
   content=h('div',{className:'twocol'},current,history);
+
+ }else if(tab==='dailyops'){
+  const openTasks=(ops.tasks||[]).filter(x=>!['done','cancelled'].includes(x.status));
+  const openTickets=(ops.tickets||[]).filter(x=>!['resolved','closed','cancelled'].includes(x.status));
+  content=h(React.Fragment,null,
+   h('div',{className:'stats outletDailyStats'},
+    h(Card,{t:'Open tasks',v:String(openTasks.length),s:String(openTasks.filter(x=>x.sla_status==='overdue').length)+' overdue'}),
+    h(Card,{t:'Open tickets',v:String(openTickets.length),s:String(openTickets.filter(x=>x.sla_status==='overdue').length)+' overdue'}),
+    h(Card,{t:'Field visits',v:String((ops.visits||[]).length),s:'Scheduled + completed history'}),
+    h(Card,{t:'Compliance',v:String((ops.compliance||[]).filter(x=>!x.resolved_at&&x.status!=='compliant').length),s:'Open corrective actions'})
+   ),
+   h('div',{className:'twocol'},
+    h('section',{className:'panel'},h(Title,{t:'Tasks & follow-ups',tag:'SLA'}),h(DataTable,{rows:(ops.tasks||[]).slice(0,30),cols:[['title','Task'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['status','Status']],empty:'No tasks for this outlet.'})),
+    h('section',{className:'panel'},h(Title,{t:'Support tickets',tag:'ISSUES'}),h(DataTable,{rows:(ops.tickets||[]).slice(0,30),cols:[['ticket_no','Ticket'],['category','Category'],['subject','Subject'],['priority','Priority'],['sla_status','SLA'],['status','Status']],empty:'No support tickets for this outlet.'}))
+   ),
+   h('div',{className:'twocol'},
+    h('section',{className:'panel'},h(Title,{t:'Field visits',tag:'INSPECTION'}),h(DataTable,{rows:(ops.visits||[]).slice(0,30),cols:[['scheduled_at','Scheduled'],['visit_type','Type'],['visitor','Visitor'],['status','Status'],['overall_score','Score'],['next_visit_at','Next']],empty:'No field visits for this outlet.'})),
+    h('section',{className:'panel'},h(Title,{t:'Compliance',tag:'SOP'}),h(DataTable,{rows:(ops.compliance||[]).slice(0,30),cols:[['checked_at','Checked'],['overall_score','Score'],['status','Status'],['corrective_action','Corrective'],['corrective_due_at','Due'],['resolved_at','Resolved']],empty:'No compliance checks for this outlet.'}))
+   ),
+   h('div',{className:'twocol'},
+    h('section',{className:'panel'},h(Title,{t:'Communication notes',tag:'CALL / WHATSAPP / MEETING'}),h(DataTable,{rows:(ops.communications||[]).slice(0,40),cols:[['created_at','Date'],['channel','Channel'],['direction','Direction'],['subject','Subject'],['note','Note'],['follow_up_at','Follow-up']],empty:'No communication notes for this outlet.'})),
+    h('section',{className:'panel'},h(Title,{t:'Marketing execution',tag:'OUTLET'}),h(DataTable,{rows:(ops.marketing||[]).slice(0,30),cols:[['campaign_name','Campaign'],['status','Status'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['execution_verified','Verified',v=>Number(v)?'Yes':'No']],empty:'No marketing executions for this outlet.'}))
+   )
+  );
  }else if(tab==='closure'){
   const controls=h('section',{className:'panel'},h(Title,{t:'Suspension / closure control',tag:'OWNER FINAL'}),h('p',{className:'muted'},'Operations can prepare the closure checklist. Only Founder can move the pipeline to Suspended or Closed.'),p.operational_state==='suspended'?h('div',{className:'notice'},h('b',null,'SUSPENDED'),h('span',null,p.suspension_reason||'Owner-approved suspension')):null,p.closure_reason?h('div',{className:'notice'},h('b',null,'Closure reason'),h('span',null,p.closure_reason)):null);
   content=h('div',{className:'twocol'},checklist('closure'),controls);
