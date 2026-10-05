@@ -596,7 +596,7 @@ function OperationsPatch3View({mode,intel,onRefresh,user}){
  }else if(mode==='stockintel'){
   body=h(React.Fragment,null,topCards,
    h('section',{className:'panel'},h(Title,{t:'Stock intelligence & reorder suggestions',tag:'7 / 30 DAY VELOCITY'}),h(DataTable,{rows:inventory,cols:[
-    ['product','Product'],['grams','Pack'],['stock_qty','Stock'],['sales_qty_7d','7d sold'],['sales_qty_30d','30d sold'],['daily_velocity','Daily'],['days_cover','Days cover'],['movement_class','Movement'],['stock_status','Stock status'],['suggested_reorder_qty','Reorder'],['variance_qty','Variance'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},h('button',{className:'miniBtn',disabled:busy,onClick:()=>stockCount(r)},'Count'),['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'miniBtn',disabled:busy,onClick:()=>policy(r)},'Policy'):null)]
+    ['outlet','Outlet'],['product','Product'],['grams','Pack'],['stock_qty','Stock'],['sales_qty_7d','7d sold'],['sales_qty_30d','30d sold'],['daily_velocity','Daily'],['days_cover','Days cover'],['movement_class','Movement'],['stock_status','Stock status'],['suggested_reorder_qty','Reorder'],['variance_qty','Variance'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},h('button',{className:'miniBtn',disabled:busy,onClick:()=>stockCount(r)},'Count'),['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'miniBtn',disabled:busy,onClick:()=>policy(r)},'Policy'):null)]
    ],empty:'No outlet inventory movements yet.'})),
    h('div',{className:'notice'},h('b',null,'Safe stock control'),h('span',null,'Physical count records mismatches only. It does not automatically alter the inventory ledger. Any stock adjustment remains an approved inventory control.'))
   );
@@ -609,8 +609,8 @@ function OperationsPatch3View({mode,intel,onRefresh,user}){
     h(Card,{t:'30+ days',v:money(aging.d30_plus||0),s:'Escalation candidate'})
    ),
    h('div',{className:'stats'},
-    h(Card,{t:'Company receivable',v:money(aging.company_receivable||0),s:'Negative net payable direction'}),
-    h(Card,{t:'Franchise payable',v:money(aging.franchise_payable||0),s:'Positive net payable direction'}),
+    h(Card,{t:'Company receivable',v:money(aging.company_receivable||0),s:'Verified sales less franchise margin'}),
+    h(Card,{t:'Franchise payable',v:money(aging.franchise_payable||0),s:'Negative net balance / company owes outlet'}),
     h(Card,{t:'Open settlements',v:String(summary.open_settlements||0),s:'All non-paid statuses'}),
     h(Card,{t:'7+ day POS inactive',v:String(summary.no_sale_7d||0),s:'Network risk signal'})
    ),
