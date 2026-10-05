@@ -566,7 +566,7 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
  const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
  const outlets=work.outlets||[],assignees=work.assignees||[];
  const[task,setTask]=React.useState({franchise_id:'',task_type:'follow_up',title:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''});
- const[visit,setVisit]=React.useState({id:0,franchise_id:'',visit_type:'routine',status:'scheduled',scheduled_at:'',visitor_user_id:'',cleanliness_score:100,branding_score:100,product_display_score:100,pricing_compliance_score:100,pos_usage_score:100,stock_handling_score:100,findings:'',corrective_action:'',next_visit_at:''});
+ const[visit,setVisit]=React.useState({id:0,franchise_id:'',visit_type:'routine',status:'scheduled',scheduled_at:'',visitor_user_id:'',cleanliness_score:100,branding_score:100,product_display_score:100,pricing_compliance_score:100,pos_usage_score:100,stock_handling_score:100,findings:'',corrective_action:'',evidence_ref:'',next_visit_at:''});
  const[ticket,setTicket]=React.useState({franchise_id:'',category:'other',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''});
  const[comm,setComm]=React.useState({franchise_id:'',channel:'call',direction:'outbound',subject:'',note:'',promised_date:'',follow_up_at:''});
  const[comp,setComp]=React.useState({franchise_id:'',branding_score:100,pricing_score:100,pos_usage_score:100,stock_handling_score:100,customer_service_score:100,findings:'',corrective_action:'',corrective_due_at:''});
@@ -601,7 +601,7 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
   );
  }else if(mode==='visits'){
   async function saveVisit(){if(!visit.franchise_id)return;await act(async()=>{await api('operations.visit.save',{method:'POST',body:{...visit,id:Number(visit.id||0),franchise_id:Number(visit.franchise_id),visitor_user_id:visit.visitor_user_id?Number(visit.visitor_user_id):null}});setVisit({id:0,franchise_id:'',visit_type:'routine',status:'scheduled',scheduled_at:'',visitor_user_id:'',cleanliness_score:100,branding_score:100,product_display_score:100,pricing_compliance_score:100,pos_usage_score:100,stock_handling_score:100,findings:'',corrective_action:'',next_visit_at:''})},'Field visit saved')}
-  function editVisit(r){setVisit({id:Number(r.id),franchise_id:String(r.franchise_id),visit_type:r.visit_type||'routine',status:r.status||'scheduled',scheduled_at:r.scheduled_at?String(r.scheduled_at).replace(' ','T').slice(0,16):'',visitor_user_id:r.visitor_user_id?String(r.visitor_user_id):'',cleanliness_score:r.cleanliness_score??100,branding_score:r.branding_score??100,product_display_score:r.product_display_score??100,pricing_compliance_score:r.pricing_compliance_score??100,pos_usage_score:r.pos_usage_score??100,stock_handling_score:r.stock_handling_score??100,findings:r.findings||'',corrective_action:r.corrective_action||'',next_visit_at:r.next_visit_at?String(r.next_visit_at).replace(' ','T').slice(0,16):''})}
+  function editVisit(r){setVisit({id:Number(r.id),franchise_id:String(r.franchise_id),visit_type:r.visit_type||'routine',status:r.status||'scheduled',scheduled_at:r.scheduled_at?String(r.scheduled_at).replace(' ','T').slice(0,16):'',visitor_user_id:r.visitor_user_id?String(r.visitor_user_id):'',cleanliness_score:r.cleanliness_score??100,branding_score:r.branding_score??100,product_display_score:r.product_display_score??100,pricing_compliance_score:r.pricing_compliance_score??100,pos_usage_score:r.pos_usage_score??100,stock_handling_score:r.stock_handling_score??100,findings:r.findings||'',corrective_action:r.corrective_action||'',evidence_ref:r.evidence_ref||'',next_visit_at:r.next_visit_at?String(r.next_visit_at).replace(' ','T').slice(0,16):''})}
   body=h(React.Fragment,null,metrics,
    h('section',{className:'panel'},h(Title,{t:visit.id?'Update field visit':'Schedule / record field visit',tag:'INSPECTION'}),h('div',{className:'formrow opsForm'},
     outletSelect(visit.franchise_id,v=>setVisit({...visit,franchise_id:v})),
@@ -617,10 +617,11 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
     h(Field,{label:'Stock handling',value:visit.stock_handling_score,onChange:v=>setVisit({...visit,stock_handling_score:v}),type:'number'}),
     h(Field,{label:'Findings',value:visit.findings,onChange:v=>setVisit({...visit,findings:v})}),
     h(Field,{label:'Corrective action',value:visit.corrective_action,onChange:v=>setVisit({...visit,corrective_action:v})}),
+    h(Field,{label:'Photo / evidence reference',value:visit.evidence_ref,onChange:v=>setVisit({...visit,evidence_ref:v})}),
     h(Field,{label:'Next visit',value:visit.next_visit_at,onChange:v=>setVisit({...visit,next_visit_at:v}),type:'datetime-local'}),
     h('button',{className:'primary fit',disabled:busy,onClick:saveVisit},visit.id?'Update visit':'Save visit')
    )),
-   h(DataTable,{rows:work.visits||[],cols:[['outlet','Outlet'],['visit_type','Type'],['status','Status'],['scheduled_at','Scheduled'],['visitor','Visitor'],['overall_score','Score'],['next_visit_at','Next'],['findings','Findings'],['actions','Action',(_,r)=>h('button',{className:'miniBtn',onClick:()=>editVisit(r)},'Edit')]],empty:'No field visits recorded.'})
+   h(DataTable,{rows:work.visits||[],cols:[['outlet','Outlet'],['visit_type','Type'],['status','Status'],['scheduled_at','Scheduled'],['visitor','Visitor'],['overall_score','Score'],['evidence_ref','Evidence'],['next_visit_at','Next'],['findings','Findings'],['actions','Action',(_,r)=>h('button',{className:'miniBtn',onClick:()=>editVisit(r)},'Edit')]],empty:'No field visits recorded.'})
   );
  }else if(mode==='tickets'){
   async function createTicket(){if(!ticket.franchise_id||!ticket.subject)return;await act(async()=>{await api('operations.ticket.create',{method:'POST',body:{...ticket,franchise_id:Number(ticket.franchise_id),assigned_user_id:ticket.assigned_user_id?Number(ticket.assigned_user_id):null,due_at:ticket.due_at||null}});setTicket({franchise_id:'',category:'other',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''})},'Support ticket created')}
