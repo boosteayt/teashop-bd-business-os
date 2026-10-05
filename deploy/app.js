@@ -557,7 +557,7 @@ function OperationsWorkspace({user}){
  React.useEffect(()=>{load()},[period]);
  if(!data||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['performance','Performance'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['security','Control Audit']]:[]);
+ const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
  let body=null;
  if(tab==='network'){
   body=h(React.Fragment,null,
