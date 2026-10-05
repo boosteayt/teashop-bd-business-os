@@ -1,22 +1,45 @@
 # Tea Shop BD Business OS — Architecture Baseline
 
 ## Control model
-- Founder/Owner: full system, sourcing/manufacturing confidentiality, pricing policy, finance, permissions and overrides.
-- Omar Faruk: Franchise & Retail Operations. No ownership/equity and no manufacturing/sourcing entitlement.
-- Finance: settlement, ledger, P&L, VAT/tax provision and approved payable workflows.
-- Warehouse: raw tea, packaging, production output, transfers and stock reconciliation.
-- Regional: assigned outlet operations only.
-- Franchise: own outlet data only.
-- Cashier: POS only.
+- Founder / Owner / CEO: full system, sourcing/manufacturing confidentiality, pricing policy, finance, permissions and overrides.
+- Franchise & Retail Operations: network operations, outlet sales, stock follow-up, settlement follow-up, territory and performance. No ownership/equity and no manufacturing/sourcing entitlement.
+- Finance & Accounts: settlement, ledger, P&L, VAT/tax provision and approved payable workflows.
+- Warehouse & Inventory: raw tea, packaging, finished goods, transfers and reconciliation.
+- Production & Blending: blend recipes/batches, input/output and yield.
+- Quality Control: incoming/blend/finished QC and wastage review.
+- Packaging: material/BOM/packing jobs and finished SKU creation.
+- Regional Operations: assigned outlet operations.
+- Franchise Owner / Outlet Manager: own authorized outlet data.
+- POS / Cashier: retail sale workflow.
+- Auditor: read-only control/report/audit access.
+
+## Primary domain object: Tea
+The `Tea` workspace is the master lifecycle view for the 99 Tea Shop BD tea names.
+
+A tea's traceability chain is:
+purchase -> raw tea / lot -> blend / production -> QC / wastage -> packaging -> finished SKU -> warehouse -> outlet transfer -> POS sale -> franchise margin -> settlement -> finance / profit.
 
 ## Franchise economics
-Stock received is full account/MRP value. Margin is earned only on verified eligible POS sales. Standard tiers: 25%, 27%, 30%; Owner can apply a manual percentage with effective date and audit log.
+Stock received is full account/MRP value. Margin is earned only on verified eligible POS sales.
 
-## Omar Faruk performance share
-Working tiers: Base 15%, Growth 20%, Elite 25%, plus Owner-controlled manual override. Share is calculated on positive distributable Franchise Division operating profit after agreed costs/expenses, never on MRP, stock issued or gross sales.
+Standard tiers:
+- Starter 25%
+- Growth 27%
+- Elite 30%
+- Founder-approved manual percentage
 
-## Operational chain
-Purchase/raw tea -> production/blending -> QC/wastage -> packaging/rebuild -> finished goods -> central inventory -> franchise transfer -> POS verified sale -> franchise earned margin -> monthly settlement -> Franchise Division P&L -> Omar Faruk performance share -> Tea Shop BD net.
+Margin changes are historical, effective-dated and audited.
+
+## Performance share
+The Franchise & Retail Operations performance share is calculated on positive distributable Franchise Division operating profit after agreed costs/expenses, never on MRP, stock issued or gross sales. Policy uses role-based keys so personnel can change without changing the financial model.
+
+## Separation
+- `teashop.bd`: Business OS
+- `teashop.com.bd`: existing ecommerce, untouched
+- Production secrets and database credentials remain outside Git.
+
+## Deployment
+GitHub is source of truth. Routine deployment is cPanel Update from Remote -> Deploy HEAD Commit. The committed `deploy/` runtime is copied to `/home/teashopc/teashop.bd`. GitHub Actions is manual-only and is not required for ordinary production releases.
 
 ## Git discipline
-Never commit node_modules, dist, .env, logs, uploads, backups, DB dumps or runtime storage. Git is source-of-truth; production builds are generated during deployment.
+Never commit node_modules, .env, credentials, first-login passwords, logs, uploads, backups, DB dumps or runtime storage.
