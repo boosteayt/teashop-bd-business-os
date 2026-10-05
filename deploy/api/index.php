@@ -89,6 +89,25 @@ function outlet_exists(PDO $pdo,int $fid): array {
  return $row;
 }
 
+function ops_sla_due(string $priority,?string $requested=null): string {
+ if($requested){
+  $ts=strtotime($requested);if($ts!==false)return date('Y-m-d H:i:s',$ts);
+ }
+ $hours=['critical'=>4,'high'=>12,'medium'=>48,'low'=>96][$priority]??48;
+ return date('Y-m-d H:i:s',time()+($hours*3600));
+}
+function ops_assignee(PDO $pdo,$id): ?int {
+ if($id===null||$id===''||(int)$id<=0)return null;
+ $uid=(int)$id;
+ $q=$pdo->prepare("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=? AND u.active=1 AND r.code IN('OWNER','OPERATIONS','REGIONAL') LIMIT 1");
+ $q->execute([$uid]);
+ if(!$q->fetchColumn())out(['ok'=>false,'code'=>'INVALID_OPERATIONS_ASSIGNEE'],422);
+ return $uid;
+}
+function ops_priority(string $priority): string {
+ return in_array($priority,['low','medium','high','critical'],true)?$priority:'medium';
+}
+
 if($route==='health') out(['ok'=>true,'service'=>'Tea Shop BD Business OS API','database'=>'connected']);
 
 if($route==='bootstrap.users' && $method==='POST'){
