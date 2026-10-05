@@ -300,3 +300,26 @@ Production-safe live E2E:
 Expected final E2E gate:
 
 `OPERATIONS_V2_ROUND1_FINAL_GREEN`
+
+
+## Operations Command Center V2 — Round 2
+Round 2 adds Intelligence & Automation on top of the GREEN daily-operations core.
+
+Production upgrade:
+`php server/upgrade-operations-v2-round2.php`
+
+Source/database verification:
+`php server/verify-operations-v2-round2.php`
+
+Cleanup-safe production E2E:
+`php server/e2e-operations-v2-round2.php`
+
+Round 2 capabilities:
+- Auto Task Engine: idempotent tasks for 3+ day POS inactivity, overdue settlements, stock risk, expired training and urgent customer complaints.
+- Target Breakdown: monthly target, MTD sales, achievement, remaining target and required daily pace.
+- Reorder Center: 30-day velocity, days cover, stock state and suggested reorder quantity/value.
+- Settlement Follow-up Desk: contact channel, promise amount/date, evidence and follow-up history without changing Finance settlement status.
+- Risk Center: live Operations alerts plus automation coverage.
+- Customer Care: customer-category SLA tickets and complaint queue.
+- Training Compliance: active-staff coverage, expired/expiring training and attention queue.
+- Operations authority remains unchanged: no pricing/margin override, company finance administration, user/settings authority, self-approval or final outlet closure authority.
