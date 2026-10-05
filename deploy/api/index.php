@@ -823,7 +823,7 @@ if($route==='operations.report.snapshot' && $method==='POST'){
 
 if($route==='operations.security.audit'){
  $u=outlet_ops_user(['OWNER','OPERATIONS']);
- $tables=['outlet_profiles','outlet_pipeline','operations_tasks','support_tickets','outlet_sales_targets','operations_alerts','performance_records','audit_logs'];$present=[];
+ $tables=['outlet_profiles','outlet_pipeline','operations_tasks','support_tickets','outlet_sales_targets','operations_alerts','operations_automation_links','settlement_followups','performance_records','audit_logs'];$present=[];
  $q=$pdo->prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?");foreach($tables as $t){$q->execute([$t]);$present[$t]=(int)$q->fetchColumn()===1;}
  $opsUsers=(int)$pdo->query("SELECT COUNT(*) FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code='OPERATIONS'")->fetchColumn();
  out(['ok'=>true,'role'=>$u['role'],'operations_users'=>$opsUsers,'tables'=>$present,
