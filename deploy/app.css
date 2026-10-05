@@ -651,3 +651,15 @@ td b{font-size:9.5px}
 @media(max-width:680px){.performanceWeights,.pnlStrip,.securityGrid{grid-template-columns:1fr}.finalPeriod{justify-content:stretch}.finalPeriod .field{max-width:none;width:100%}}
 
 .reportActions{display:flex;justify-content:flex-end;margin:-4px 0 8px}
+
+
+/* operations-command-center-v2-round1 */
+.opsV2Stats{margin-top:0}
+.opsV2Form{display:grid;grid-template-columns:repeat(3,minmax(170px,1fr));gap:10px;align-items:end;margin-bottom:12px}
+.threecol.opsV2Grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.opsV2Grid .panel{min-width:0}
+.opsV2Grid .tablewrap table{min-width:620px}
+.opsTabs button:nth-child(-n+5){border-color:#c9ddd4;background:#f8fbf9}
+.opsTabs button.active:nth-child(-n+5){background:#153e2e;color:#fff;border-color:#153e2e}
+@media(max-width:1180px){.opsV2Form{grid-template-columns:repeat(2,minmax(150px,1fr))}.threecol.opsV2Grid{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.opsV2Form,.threecol.opsV2Grid{grid-template-columns:1fr}}
