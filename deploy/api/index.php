@@ -564,7 +564,6 @@ if($route==='inventory.transfer.create' && $method==='POST'){
 if($route==='operations.alerts.refresh' && $method==='POST'){
  csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
  $result=ops_refresh_alerts($pdo);
- audit($pdo,(int)$u['id'],'refresh','operations_alerts',null,$result);
  out(['ok'=>true]+$result);
 }
 
@@ -1113,7 +1112,9 @@ if($route==='operations.dashboard'){
    (SELECT COUNT(*) FROM field_visits WHERE status='scheduled' AND scheduled_at BETWEEN NOW() AND DATE_ADD(NOW(),INTERVAL 7 DAY)) visits_next_7d,
    (SELECT COUNT(*) FROM outlet_compliance_checks WHERE status IN('watch','non_compliant') AND resolved_at IS NULL) open_compliance,
    (SELECT COUNT(*) FROM outlet_training_records WHERE status IN('pending','scheduled','expired') OR (expires_at IS NOT NULL AND expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))) training_attention,
-   (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing")->fetch();
+   (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing,
+   (SELECT COUNT(*) FROM operations_alerts WHERE status='open') open_alerts,
+   (SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical') critical_alerts")->fetch();
 
  $currentSales=(float)($current['sales']??0);
  $previousSales=(float)($previous['sales']??0);
@@ -1148,6 +1149,8 @@ if($route==='operations.dashboard'){
      'open_compliance'=>(int)($work['open_compliance']??0),
      'training_attention'=>(int)($work['training_attention']??0),
      'active_marketing'=>(int)($work['active_marketing']??0),
+     'open_alerts'=>(int)($work['open_alerts']??0),
+     'critical_alerts'=>(int)($work['critical_alerts']??0),
    ],
    'outlets'=>$outlets,
    'low_performers'=>$low,
