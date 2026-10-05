@@ -182,3 +182,27 @@ Read-only Patch 2 DB gate:
 
 Fresh installers automatically apply:
 `database/migrations/2026_10_05_operations_patch2_daily_support.sql`
+
+
+## Operations Patch 3 — Sales, Stock & Settlement Intelligence
+Implemented:
+- 7-day / 30-day outlet sales velocity
+- Monthly sales and receipt targets
+- Target achievement %
+- POS inactivity / no-sale signals
+- SKU movement classes: Fast / Steady / Slow / Dead
+- Stock states: Out of Stock / Low / Healthy / Overstock / Dead
+- Days-cover calculation
+- Outlet/SKU reorder suggestions
+- Editable days-cover policy
+- Safe physical stock-count mismatch capture without automatic ledger adjustment
+- Settlement aging buckets: Current, 1–7, 8–15, 16–30, 30+
+- Company receivable vs franchise payable direction
+- Healthy-business leaderboard using Sales Target 40%, Outlet Health 25%, Inventory 20%, Settlement Discipline 15%
+- Top / Bottom outlet ranking
+
+Existing production DB:
+`php server/upgrade-operations-patch3.php`
+
+Read-only DB gate:
+`php server/verify-operations-patch3.php`
