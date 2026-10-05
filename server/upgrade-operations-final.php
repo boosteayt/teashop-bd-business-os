@@ -25,6 +25,7 @@ $migrations=[
  'database/migrations/2026_10_05_operations_patch4_final_closure.sql',
  'database/migrations/2026_10_05_operations_command_center_v2_round1.sql',
  'database/migrations/2026_10_05_operations_command_center_v2_round2.sql',
+ 'database/migrations/2026_10_05_operations_command_center_v2_round3.sql',
 ];
 foreach($migrations as $relative){
  $file=$root.'/'.$relative;
@@ -87,7 +88,7 @@ $tables=[
  'outlet_profiles','outlet_pipeline','outlet_checklist_items','outlet_staff','outlet_training_records','outlet_timeline',
  'operations_tasks','field_visits','support_tickets','support_ticket_updates','outlet_communications','outlet_compliance_checks','marketing_executions',
  'outlet_sales_targets','outlet_inventory_policies','outlet_stock_counts',
- 'operations_alerts','operations_report_snapshots','outlet_daily_checkins','outlet_contracts','operations_automation_links','settlement_followups'
+ 'operations_alerts','operations_report_snapshots','outlet_daily_checkins','outlet_contracts','operations_automation_links','settlement_followups','operations_benchmark_snapshots','operations_notification_routes','operations_closure_handovers'
 ];
 $missing=[];
 $q=$pdo->prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?");
