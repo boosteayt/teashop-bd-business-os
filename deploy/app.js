@@ -545,7 +545,7 @@ function QCWastage(){
 function OperationsRound1View({mode,data,onRefresh,user}){
  const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
  const outlets=data.outlets||[],assignees=data.assignees||[];
- const[checkin,setCheckin]=React.useState({franchise_id:'',checkin_date:new Date().toISOString().slice(0,10),opening_status:'on_time',opened_at:'',closing_status:'pending',closed_at:'',opening_photo_ref:'',closing_photo_ref:'',manager_note:''});
+ const[checkin,setCheckin]=React.useState({franchise_id:'',checkin_date:new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),opening_status:'on_time',opened_at:'',closing_status:'pending',closed_at:'',opening_photo_ref:'',closing_photo_ref:'',manager_note:''});
  const[visit,setVisit]=React.useState({franchise_id:'',visit_type:'routine',scheduled_at:'',visitor_user_id:''});
  const[contract,setContract]=React.useState({id:0,franchise_id:'',contract_type:'lease',document_no:'',start_date:'',expiry_date:'',renewal_status:'active',reminder_days:30,evidence_ref:'',owner_note:''});
  async function act(fn,success){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
@@ -566,6 +566,10 @@ function OperationsRound1View({mode,data,onRefresh,user}){
   const dueContracts=(data.contracts||[]).filter(x=>['expired','critical','due'].includes(x.renewal_health)).slice(0,12);
   const blocked=(data.launches||[]).filter(x=>x.readiness_state!=='launch_ready').slice(0,12);
   body=h(React.Fragment,null,stats,
+   h('div',{className:'regionHeat'},(data.regional||[]).map((r,idx)=>h('article',{key:r.division+'-'+r.district+'-'+r.upazila+'-'+idx,className:(Number(r.attention_outlets||0)+Number(r.open_alerts||0)+Number(r.overdue_tasks||0)>0)?'attention':'healthy'},
+    h('small',null,r.division+' · '+r.district),h('b',null,r.upazila),h('span',null,String(r.active_outlets||0)+' active / '+String(r.total_outlets||0)+' outlets'),
+    h('em',null,money(r.sales_30d||0)+' · '+String(r.open_alerts||0)+' alerts')
+   ))),
    h('section',{className:'panel'},h(Title,{t:'Regional command center',tag:'DIVISION → DISTRICT → UPAZILA'}),
     h(DataTable,{rows:data.regional||[],cols:[['division','Division'],['district','District'],['upazila','Upazila'],['total_outlets','Outlets'],['active_outlets','Active'],['pipeline_outlets','Pipeline'],['attention_outlets','Attention'],['sales_30d','30d sales',money],['open_alerts','Alerts'],['overdue_tasks','Overdue tasks']],empty:'No regional outlet data yet.'})
    ),
