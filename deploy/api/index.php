@@ -449,9 +449,12 @@ if($route==='operations.workboard'){
    WHERE tr.status IN('pending','scheduled','expired') OR (tr.expires_at IS NOT NULL AND tr.expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))
    ORDER BY FIELD(tr.status,'expired','pending','scheduled'),tr.expires_at,tr.scheduled_at LIMIT 200")->fetchAll();
 
- $marketing=$pdo->query("SELECT m.id,m.franchise_id,f.code outlet_code,f.name outlet,m.campaign_code,m.campaign_name,m.status,m.start_date,m.end_date,m.assets_ready,m.execution_verified,m.sales_before,m.sales_during,m.notes,m.updated_at
-   FROM marketing_executions m JOIN franchises f ON f.id=m.franchise_id
-   ORDER BY FIELD(m.status,'live','ready','planned','completed','not_participating'),m.start_date DESC,m.id DESC LIMIT 200")->fetchAll();
+ $marketing=$pdo->query("SELECT m.id,m.franchise_id,f.code outlet_code,f.name outlet,m.campaign_code,m.campaign_name,m.status,m.priority,m.assigned_user_id,u.name assigned_to,m.due_at,m.escalation_level,m.escalated_at,m.start_date,m.end_date,m.assets_ready,m.execution_verified,m.sales_before,m.sales_during,m.notes,m.updated_at,
+   CASE WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<NOW() THEN 'overdue'
+        WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon'
+        ELSE 'on_time' END sla_status
+   FROM marketing_executions m JOIN franchises f ON f.id=m.franchise_id LEFT JOIN users u ON u.id=m.assigned_user_id
+   ORDER BY FIELD(m.status,'live','ready','planned','completed','not_participating'),m.due_at,m.id DESC LIMIT 200")->fetchAll();
 
  $outlets=$pdo->query("SELECT id,code,name,district,upazila,status FROM franchises WHERE status<>'closed' ORDER BY name")->fetchAll();
  $assignees=$pdo->query("SELECT u.id,u.name,u.email,r.code role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code IN('OWNER','OPERATIONS','REGIONAL') ORDER BY FIELD(r.code,'OPERATIONS','REGIONAL','OWNER'),u.name")->fetchAll();
@@ -584,21 +587,26 @@ if($route==='operations.compliance.save' && $method==='POST'){
  out(['ok'=>true,'id'=>$id,'overall_score'=>$overall,'status'=>$status],201);
 }
 
+
 if($route==='operations.marketing.save' && $method==='POST'){
  csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
  $name=trim((string)($body['campaign_name']??''));if($name==='')out(['ok'=>false,'code'=>'INVALID_CAMPAIGN'],422);
  $status=(string)($body['status']??'planned');if(!in_array($status,['planned','ready','live','completed','not_participating'],true))out(['ok'=>false,'code'=>'INVALID_CAMPAIGN_STATUS'],422);
- $id=(int)($body['id']??0);
+ $priority=ops_priority((string)($body['priority']??'medium'));$assignee=ops_assignee($pdo,$body['assigned_user_id']??($u['id']??null));$due=ops_sla_due($priority,($body['due_at']??null)?:null);
+ $id=(int)($body['id']??0);$escalate=!empty($body['escalate']);
  if($id>0){
-  $q=$pdo->prepare("UPDATE marketing_executions SET campaign_code=?,campaign_name=?,status=?,start_date=?,end_date=?,assets_ready=?,execution_verified=?,sales_before=?,sales_during=?,notes=? WHERE id=? AND franchise_id=?");
-  $q->execute([$body['campaign_code']??null,$name,$status,($body['start_date']??null)?:null,($body['end_date']??null)?:null,!empty($body['assets_ready'])?1:0,!empty($body['execution_verified'])?1:0,(float)($body['sales_before']??0),(float)($body['sales_during']??0),$body['notes']??null,$id,$fid]);
+  $q=$pdo->prepare("SELECT escalation_level FROM marketing_executions WHERE id=? AND franchise_id=?");$q->execute([$id,$fid]);$old=$q->fetch();if(!$old)out(['ok'=>false,'code'=>'CAMPAIGN_NOT_FOUND'],404);
+  $level=(int)$old['escalation_level']+($escalate?1:0);
+  $q=$pdo->prepare("UPDATE marketing_executions SET campaign_code=?,campaign_name=?,status=?,priority=?,assigned_user_id=?,due_at=?,escalation_level=?,escalated_at=IF(?,NOW(),escalated_at),start_date=?,end_date=?,assets_ready=?,execution_verified=?,sales_before=?,sales_during=?,notes=? WHERE id=? AND franchise_id=?");
+  $q->execute([$body['campaign_code']??null,$name,$status,$priority,$assignee,$due,$level,$escalate?1:0,($body['start_date']??null)?:null,($body['end_date']??null)?:null,!empty($body['assets_ready'])?1:0,!empty($body['execution_verified'])?1:0,(float)($body['sales_before']??0),(float)($body['sales_during']??0),$body['notes']??null,$id,$fid]);
  }else{
-  $q=$pdo->prepare("INSERT INTO marketing_executions(franchise_id,campaign_code,campaign_name,status,start_date,end_date,assets_ready,execution_verified,sales_before,sales_during,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
-  $q->execute([$fid,$body['campaign_code']??null,$name,$status,($body['start_date']??null)?:null,($body['end_date']??null)?:null,!empty($body['assets_ready'])?1:0,!empty($body['execution_verified'])?1:0,(float)($body['sales_before']??0),(float)($body['sales_during']??0),$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+  $level=$escalate?1:0;
+  $q=$pdo->prepare("INSERT INTO marketing_executions(franchise_id,campaign_code,campaign_name,status,priority,assigned_user_id,due_at,escalation_level,escalated_at,start_date,end_date,assets_ready,execution_verified,sales_before,sales_during,notes,created_by) VALUES(?,?,?,?,?,?,?,?,IF(?,NOW(),NULL),?,?,?,?,?,?,?,?)");
+  $q->execute([$fid,$body['campaign_code']??null,$name,$status,$priority,$assignee,$due,$level,$escalate?1:0,($body['start_date']??null)?:null,($body['end_date']??null)?:null,!empty($body['assets_ready'])?1:0,!empty($body['execution_verified'])?1:0,(float)($body['sales_before']??0),(float)($body['sales_during']??0),$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
  }
- outlet_timeline($pdo,$fid,(int)$u['id'],'marketing','Marketing · '.$status,$name,'marketing_execution',$id,['assets_ready'=>!empty($body['assets_ready']),'execution_verified'=>!empty($body['execution_verified'])]);
- audit($pdo,(int)$u['id'],'marketing_save','franchise',(string)$fid,['marketing_id'=>$id,'campaign_name'=>$name,'status'=>$status]);
- out(['ok'=>true,'id'=>$id]);
+ outlet_timeline($pdo,$fid,(int)$u['id'],'marketing','Marketing · '.$status,$name,'marketing_execution',$id,['priority'=>$priority,'due_at'=>$due,'escalation_level'=>$level,'assets_ready'=>!empty($body['assets_ready']),'execution_verified'=>!empty($body['execution_verified'])]);
+ audit($pdo,(int)$u['id'],'marketing_save','franchise',(string)$fid,['marketing_id'=>$id,'campaign_name'=>$name,'status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'due_at'=>$due,'escalation_level'=>$level]);
+ out(['ok'=>true,'id'=>$id,'escalation_level'=>$level]);
 }
 
 if($route==='operations.dashboard'){
