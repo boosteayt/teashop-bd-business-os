@@ -501,19 +501,27 @@ function QCWastage(){
   h('div',{className:'twocol'},h('section',{className:'panel'},h(Title,{t:'QC checks',tag:'QUALITY'}),qcTable),h('section',{className:'panel'},h(Title,{t:'Wastage & variance',tag:'YIELD'}),wasteTable))
  );
 }
+
 function OperationsWorkspace(){
- const[data,setData]=React.useState(null),[msg,setMsg]=React.useState('');
- React.useEffect(()=>{api('operations.dashboard').then(setData).catch(e=>setMsg('Operations data could not be loaded: '+(e.code||'ERROR')))},[]);
+ const[data,setData]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[msg,setMsg]=React.useState('');
+ React.useEffect(()=>{Promise.all([api('operations.dashboard'),api('franchise.territory')]).then(([a,b])=>{setData(a);setTerritory(b)}).catch(e=>setMsg('Operations data could not be loaded: '+(e.code||'ERROR')))},[]);
  if(!data)return msg?h('div',{className:'authError'},msg):h(Loading);
- const n=data.network||{},s=data.sales||{};
+ const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
+ const territoryRows=territory.territories||[];
  return h(React.Fragment,null,
-  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Outlet pipeline, sales monitoring, stock follow-up, settlement discipline, territory performance and outlet health.')),
+  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS · PATCH 1'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Outlet pipeline, 360° readiness, territory hierarchy, health, stock and settlement follow-up.')),
   h('div',{className:'stats'},
    h(Card,{t:'Active outlets',v:String(n.active_outlets||0),s:String(n.total_outlets||0)+' total open records'}),
-   h(Card,{t:'Pipeline / setup',v:String(n.pipeline_outlets||0),s:'Launch follow-up'}),
+   h(Card,{t:'Pipeline / setup',v:String(n.pipeline_outlets||0),s:String(pipeline.length)+' pipeline records'}),
    h(Card,{t:'30-day / current sales',v:money(s.current||0),s:String(s.receipts||0)+' receipts this month'}),
    h(Card,{t:'Attention outlets',v:String(n.attention_outlets||0),s:'Watch + critical'})
   ),
+  h('section',{className:'panel'},h(Title,{t:'Opening pipeline',tag:'LAUNCH TRACKER'}),h(DataTable,{rows:pipeline,cols:[
+   ['code','Code'],['name','Outlet'],['district','District'],['pipeline_stage','Stage'],['target_open_date','Target'],['next_action','Next action'],['blocking_reason','Blocker'],['health','Health']
+  ],empty:'No outlets are currently in the opening pipeline.'})),
+  h('section',{className:'panel'},h(Title,{t:'Territory hierarchy',tag:'DIVISION → DISTRICT → UPAZILA'}),h(DataTable,{rows:territoryRows,cols:[
+   ['division','Division'],['district','District'],['upazila','Upazila'],['total_outlets','Outlets'],['active_outlets','Active'],['pipeline_outlets','Pipeline'],['attention_outlets','Attention'],['sales_30d','30d sales',money]
+  ],empty:'No territory assignments yet. Set Division, District and Upazila from Outlet 360°.'})),
   h('section',{className:'panel'},h(Title,{t:'Outlet operations table',tag:'LIVE'}),h(DataTable,{rows:data.outlets||[],cols:[
    ['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['status','Status'],['margin_percent','Margin %'],
    ['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health'],['last_sale_at','Last sale']
