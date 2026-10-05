@@ -82,13 +82,13 @@ final class ApiClient {
   $raw=curl_exec($this->ch);$error=curl_error($this->ch);$status=(int)curl_getinfo($this->ch,CURLINFO_RESPONSE_CODE);
   if($raw===false)fail('HTTP_TRANSPORT_FAILED: '.$error);
   $data=json_decode((string)$raw,true);
-  if(!is_array($data))fail('NON_JSON_RESPONSE status='.$status);
+  if(!is_array($data))fail('NON_JSON_RESPONSE route='.$route.' status='.$status);
   if(isset($data['csrf'])&&is_string($data['csrf'])&&$data['csrf']!=='')$this->csrf=$data['csrf'];
   return [$status,$data];
  }
  public function expect(string $method,string $route,?array $body,int $status=200,?string $code=null): array {
   [$got,$data]=$this->request($method,$route,$body);
-  if($got!==$status)fail("HTTP_EXPECTATION_FAILED {$route} expected={$status} got={$got} code=".($data['code']??'none')." cookies=".count($this->cookies)." csrf=".($this->csrf!==null?'set':'missing'));
+  if($got!==$status)fail("HTTP_EXPECTATION_FAILED {$route} expected={$status} got={$got} code=".($data['code']??'none')." phase=".($data['phase']??'none')." cookies=".count($this->cookies)." csrf=".($this->csrf!==null?'set':'missing'));
   if($code!==null&&($data['code']??null)!==$code)fail("CODE_EXPECTATION_FAILED {$route} expected={$code} got=".($data['code']??'none'));
   if($status<400&&(($data['ok']??false)!==true))fail("API_NOT_OK {$route}");
   return $data;
@@ -278,8 +278,11 @@ try{
 
  // Target + stock intelligence + reorder.
  $monthStart=date('Y-m-01');$monthEnd=date('Y-m-t');
+ echo "ROUND2_STAGE=target_save\n";
  $ops->expect('POST','operations.target.save',['franchise_id'=>$franchiseId,'period_start'=>$monthStart,'period_end'=>$monthEnd,'sales_target'=>1000,'receipt_target'=>4,'notes'=>'Round 2 target'],200);
+ echo "ROUND2_STAGE=inventory_policy\n";
  $ops->expect('POST','operations.inventory_policy.save',['franchise_id'=>$franchiseId,'product_pack_id'=>$packId,'min_days_cover'=>7,'target_days_cover'=>21,'max_days_cover'=>60,'dead_stock_days'=>30],200);
+ echo "ROUND2_STAGE=operations_intelligence\n";
  $intel=$ops->expect('GET','operations.intelligence',null,200);
  $outletRows=array_values(array_filter($intel['outlets']??[],fn($r)=>(int)($r['franchise_id']??0)===$franchiseId));
  ok(count($outletRows)===1,'INTELLIGENCE_OUTLET_MISSING');
