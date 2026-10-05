@@ -549,7 +549,7 @@ if($route==='franchise.create' && $method==='POST'){
  $mode=$tier==='Manual'?'manual':'tier';
  $pdo->beginTransaction();
  try{
-  $q=$pdo->prepare("INSERT INTO franchises(code,name,district,upazila,address,status,margin_mode,margin_tier,margin_percent,opened_at) VALUES(?,?,?,?,?,'pipeline',?,?,?,?,NULL)");
+  $q=$pdo->prepare("INSERT INTO franchises(code,name,district,upazila,address,status,margin_mode,margin_tier,margin_percent,opened_at) VALUES(?,?,?,?,?,'pipeline',?,?,?,NULL)");
   $q->execute([$code,$name,$body['district']??null,$body['upazila']??null,$body['address']??null,$mode,$tier,$pct]);
   $id=(int)$pdo->lastInsertId();
   $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,owner_name,owner_phone,owner_email,division,territory_code,shop_type,shop_size_sqft,agreement_no,agreement_date,lease_start,lease_end,target_open_date,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
@@ -621,7 +621,7 @@ if($route==='franchise.profile.update' && $method==='POST'){
   $q->execute([trim((string)($body['name']??$before['name'])),$body['district']??$before['district'],$body['upazila']??$before['upazila'],$body['address']??$before['address'],$fid]);
   $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,owner_name,owner_phone,owner_email,division,territory_code,shop_type,shop_size_sqft,agreement_no,agreement_date,lease_start,lease_end,target_open_date,updated_by)
    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE owner_name=VALUES(owner_name),owner_phone=VALUES(owner_phone),owner_email=VALUES(owner_email),division=VALUES(division),territory_code=VALUES(territory_code),shop_type=VALUES(shop_type),shop_size_sqft=VALUES(shop_size_sqft),agreement_no=VALUES(agreement_no),agreement_date=VALUES(agreement_date),lease_start=VALUES(lease_start),lease_end=VALUES(lease_end),target_open_date=VALUES(target_open_date),updated_by=VALUES(updated_by)");
-  $q->execute([$fid,$body['owner_name']??null,$body['owner_phone']??null,$body['owner_email']??null,$body['division']??null,$body['territory_code']??null,$body['shop_type']??null,$body['shop_size_sqft']?:null,$body['agreement_no']??null,$body['agreement_date']?:null,$body['lease_start']?:null,$body['lease_end']?:null,$body['target_open_date']?:null,(int)$u['id']]);
+  $q->execute([$fid,$body['owner_name']??null,$body['owner_phone']??null,$body['owner_email']??null,$body['division']??null,$body['territory_code']??null,$body['shop_type']??null,($body['shop_size_sqft']??null) ?: null,$body['agreement_no']??null,($body['agreement_date']??null) ?: null,($body['lease_start']??null) ?: null,($body['lease_end']??null) ?: null,($body['target_open_date']??null) ?: null,(int)$u['id']]);
   outlet_timeline($pdo,$fid,(int)$u['id'],'profile','Outlet profile updated','Owner, territory, agreement or premises profile updated','franchise',$fid);
   $pdo->commit();audit($pdo,(int)$u['id'],'update_profile','franchise',(string)$fid,['name'=>$body['name']??$before['name'],'division'=>$body['division']??null,'district'=>$body['district']??$before['district'],'upazila'=>$body['upazila']??$before['upazila']]);
   out(['ok'=>true]);
@@ -641,7 +641,7 @@ if($route==='franchise.pipeline.update' && $method==='POST'){
  try{
   $q=$pdo->prepare("INSERT INTO outlet_pipeline(franchise_id,stage,target_open_date,next_action,blocking_reason,assigned_user_id,updated_by)
    VALUES(?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE stage=VALUES(stage),target_open_date=VALUES(target_open_date),next_action=VALUES(next_action),blocking_reason=VALUES(blocking_reason),assigned_user_id=VALUES(assigned_user_id),updated_by=VALUES(updated_by)");
-  $q->execute([$fid,$stage,$body['target_open_date']?:null,$body['next_action']??null,$body['blocking_reason']??null,$body['assigned_user_id']?:null,(int)$u['id']]);
+  $q->execute([$fid,$stage,$body['target_open_date']?:null,$body['next_action']??null,$body['blocking_reason']??null,($body['assigned_user_id']??null) ?: null,(int)$u['id']]);
 
   $status=in_array($stage,['lead','verification','agreement'],true)?'pipeline':(in_array($stage,['shop_ready','training','stock_ready','pos_ready','launch'],true)?'setup':($stage==='live'?'active':($stage==='closed'?'closed':'watch')));
   $opened=$stage==='live'?"COALESCE(opened_at,CURDATE())":"opened_at";
@@ -677,7 +677,7 @@ if($route==='franchise.staff.create' && $method==='POST'){
  csrf();$u=outlet_ops_user();$fid=(int)($body['franchise_id']??0);$name=trim((string)($body['name']??''));$role=trim((string)($body['staff_role']??''));
  if($fid<=0||$name===''||$role==='')out(['ok'=>false,'code'=>'INVALID_STAFF'],422);outlet_exists($pdo,$fid);
  $q=$pdo->prepare("INSERT INTO outlet_staff(franchise_id,name,staff_role,phone,email,joined_at,notes,created_by) VALUES(?,?,?,?,?,?,?,?)");
- $q->execute([$fid,$name,$role,$body['phone']??null,$body['email']??null,$body['joined_at']?:null,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ $q->execute([$fid,$name,$role,$body['phone']??null,$body['email']??null,($body['joined_at']??null) ?: null,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
  outlet_timeline($pdo,$fid,(int)$u['id'],'staff','Outlet staff added',$name.' · '.$role,'outlet_staff',$id);
  audit($pdo,(int)$u['id'],'create','outlet_staff',(string)$id,['franchise_id'=>$fid,'name'=>$name,'role'=>$role]);
  out(['ok'=>true,'id'=>$id],201);
@@ -698,7 +698,7 @@ if($route==='franchise.training.save' && $method==='POST'){
  $id=(int)($body['id']??0);
  if($id>0){
   $q=$pdo->prepare("UPDATE outlet_training_records SET outlet_staff_id=?,course_code=?,course_title=?,status=?,scheduled_at=?,completed_at=?,expires_at=?,trainer=?,certificate_ref=?,notes=? WHERE id=? AND franchise_id=?");
-  $q->execute([$body['outlet_staff_id']?:null,$body['course_code']??null,$title,$status,$body['scheduled_at']?:null,$body['completed_at']?:null,$body['expires_at']?:null,$body['trainer']??null,$body['certificate_ref']??null,$body['notes']??null,$id,$fid]);
+  $q->execute([($body['outlet_staff_id']??null) ?: null,$body['course_code']??null,$title,$status,($body['scheduled_at']??null) ?: null,($body['completed_at']??null) ?: null,($body['expires_at']??null) ?: null,$body['trainer']??null,$body['certificate_ref']??null,$body['notes']??null,$id,$fid]);
  }else{
   $q=$pdo->prepare("INSERT INTO outlet_training_records(franchise_id,outlet_staff_id,course_code,course_title,status,scheduled_at,completed_at,expires_at,trainer,certificate_ref,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
   $q->execute([$fid,$body['outlet_staff_id']?:null,$body['course_code']??null,$title,$status,$body['scheduled_at']?:null,$body['completed_at']?:null,$body['expires_at']?:null,$body['trainer']??null,$body['certificate_ref']??null,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
