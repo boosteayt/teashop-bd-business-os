@@ -570,6 +570,7 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
  const[ticket,setTicket]=React.useState({franchise_id:'',category:'other',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''});
  const[comm,setComm]=React.useState({franchise_id:'',channel:'call',direction:'outbound',subject:'',note:'',promised_date:'',follow_up_at:''});
  const[comp,setComp]=React.useState({franchise_id:'',branding_score:100,pricing_score:100,pos_usage_score:100,stock_handling_score:100,customer_service_score:100,findings:'',corrective_action:'',corrective_due_at:''});
+ const[trainingQuick,setTrainingQuick]=React.useState({franchise_id:'',course_title:'POS & Retail Operations',status:'scheduled',trainer:'',expires_at:''});
  const[marketing,setMarketing]=React.useState({id:0,franchise_id:'',campaign_code:'',campaign_name:'',status:'planned',priority:'medium',assigned_user_id:'',due_at:'',start_date:'',end_date:'',assets_ready:'0',execution_verified:'0',sales_before:0,sales_during:0,notes:''});
  async function act(fn,success='Saved'){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
  function outletSelect(value,onChange,label='Outlet'){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},h('option',{value:''},'Select outlet'),outlets.map(x=>h('option',{key:x.id,value:x.id},x.code+' · '+x.name))))}
@@ -657,6 +658,7 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
  }else if(mode==='compliance'){
   async function saveCompliance(){if(!comp.franchise_id)return;await act(async()=>{await api('operations.compliance.save',{method:'POST',body:{...comp,franchise_id:Number(comp.franchise_id),corrective_due_at:comp.corrective_due_at||null}});setComp({franchise_id:'',branding_score:100,pricing_score:100,pos_usage_score:100,stock_handling_score:100,customer_service_score:100,findings:'',corrective_action:'',corrective_due_at:''})},'Compliance check recorded')}
   async function resolveCompliance(r){await act(()=>api('operations.compliance.resolve',{method:'POST',body:{id:Number(r.id)}}),'Compliance corrective action resolved')}
+  async function saveTrainingQuick(){if(!trainingQuick.franchise_id||!trainingQuick.course_title)return;await act(async()=>{await api('franchise.training.save',{method:'POST',body:{franchise_id:Number(trainingQuick.franchise_id),course_title:trainingQuick.course_title,status:trainingQuick.status,trainer:trainingQuick.trainer||null,expires_at:trainingQuick.expires_at||null}});setTrainingQuick({franchise_id:'',course_title:'POS & Retail Operations',status:'scheduled',trainer:'',expires_at:''})},'Training record saved')}
   body=h(React.Fragment,null,metrics,
    h('div',{className:'twocol'},
     h('section',{className:'panel'},h(Title,{t:'Compliance inspection',tag:'SOP'}),h('div',{className:'formrow opsForm'},
@@ -671,7 +673,17 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
      h(Field,{label:'Corrective due',value:comp.corrective_due_at,onChange:v=>setComp({...comp,corrective_due_at:v}),type:'datetime-local'}),
      h('button',{className:'primary fit',disabled:busy,onClick:saveCompliance},'Save compliance')
     )),
-    h('section',{className:'panel'},h(Title,{t:'Training attention',tag:'PENDING / EXPIRING'}),h(DataTable,{rows:work.training_attention||[],cols:[['outlet','Outlet'],['course_title','Course'],['status','Status'],['scheduled_at','Scheduled'],['expires_at','Expires'],['trainer','Trainer']],empty:'No training attention items.'}))
+    h('section',{className:'panel'},h(Title,{t:'Training attention',tag:'PENDING / EXPIRING'}),
+     h('div',{className:'formrow opsForm compactOpsForm'},
+      outletSelect(trainingQuick.franchise_id,v=>setTrainingQuick({...trainingQuick,franchise_id:v})),
+      h(Field,{label:'Course',value:trainingQuick.course_title,onChange:v=>setTrainingQuick({...trainingQuick,course_title:v})}),
+      selectField('Status',trainingQuick.status,v=>setTrainingQuick({...trainingQuick,status:v}),['pending','scheduled','completed','expired']),
+      h(Field,{label:'Trainer',value:trainingQuick.trainer,onChange:v=>setTrainingQuick({...trainingQuick,trainer:v})}),
+      h(Field,{label:'Expires',value:trainingQuick.expires_at,onChange:v=>setTrainingQuick({...trainingQuick,expires_at:v}),type:'date'}),
+      h('button',{className:'primary fit',disabled:busy,onClick:saveTrainingQuick},'Save training')
+     ),
+     h(DataTable,{rows:work.training_attention||[],cols:[['outlet','Outlet'],['course_title','Course'],['status','Status'],['scheduled_at','Scheduled'],['expires_at','Expires'],['trainer','Trainer']],empty:'No training attention items.'})
+    )
    ),
    h(DataTable,{rows:work.compliance||[],cols:[['checked_at','Checked'],['outlet','Outlet'],['overall_score','Score'],['status','Status'],['findings','Findings'],['corrective_action','Corrective'],['corrective_due_at','Due'],['resolved_at','Resolved'],['actions','Action',(_,r)=>!r.resolved_at&&r.status!=='compliant'?h('button',{className:'miniBtn',onClick:()=>resolveCompliance(r)},'Resolve'):'—']],empty:'No compliance checks yet.'})
   );
