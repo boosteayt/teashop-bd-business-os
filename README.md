@@ -140,3 +140,45 @@ Read-only production DB gate:
 
 Fresh installers automatically apply:
 `database/migrations/2026_10_05_operations_patch1_outlet_network_core.sql`
+
+
+## Operations Patch 2 — Daily Operations & Support
+Patch 2 turns Franchise & Retail Operations into a daily execution workboard while keeping Founder-only commercial and finance authority intact.
+
+Implemented:
+- Daily task / follow-up center
+- Outlet-linked and network-level tasks
+- Low / Medium / High / Critical priority
+- Assignee control for Owner / Operations / Regional roles
+- Due date and default SLA windows
+  - Critical: 4 hours
+  - High: 12 hours
+  - Medium: 48 hours
+  - Low: 96 hours
+- Task status flow: Open -> In Progress / Waiting -> Done / Cancelled
+- Task escalation level and escalation timestamp
+- Field visit scheduling, completion and follow-up
+- Field inspection scores for cleanliness, branding, display, pricing, POS usage and stock handling
+- Corrective action and next-visit tracking
+- Support ticket / issue management
+- Ticket categories for Stock, POS, Delivery, Customer, Branding, Payment, Staff/Training and Other
+- Ticket SLA, assignment, resolution and escalation history
+- Communication timeline for Call, WhatsApp, Email, Meeting, Visit and Internal Note
+- Promise date and automatic follow-up task creation
+- Training attention list using existing outlet training records
+- Compliance checks for Branding, Pricing, POS Usage, Stock Handling and Customer Service
+- Automatic corrective-action task for Watch / Non-Compliant checks
+- Compliance resolution workflow
+- Marketing execution tracker with assignment, priority, due/SLA, assets readiness, execution verification, before/during sales and escalation
+- Patch 2 activity visible inside Outlet 360° Daily Ops
+- Operations dashboard workload KPIs
+- Central audit log + Outlet timeline integration for mutations
+
+Existing production databases must run:
+`php server/upgrade-operations-patch2.php`
+
+Read-only Patch 2 DB gate:
+`php server/verify-operations-patch2.php`
+
+Fresh installers automatically apply:
+`database/migrations/2026_10_05_operations_patch2_daily_support.sql`
