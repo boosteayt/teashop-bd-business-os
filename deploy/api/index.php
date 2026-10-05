@@ -857,24 +857,75 @@ if($route==='operations.intelligence'){
 }
 
 if($route==='operations.target.save' && $method==='POST'){
- csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
- $start=(string)($body['period_start']??date('Y-m-01'));$end=(string)($body['period_end']??date('Y-m-t'));$target=max(0,(float)($body['sales_target']??0));$receipts=max(0,(int)($body['receipt_target']??0));
- $q=$pdo->prepare("INSERT INTO outlet_sales_targets(franchise_id,period_start,period_end,sales_target,receipt_target,notes,created_by,approved_by) VALUES(?,?,?,?,?,?,?,?)
-   ON DUPLICATE KEY UPDATE sales_target=VALUES(sales_target),receipt_target=VALUES(receipt_target),notes=VALUES(notes),approved_by=VALUES(approved_by),updated_at=NOW()");
- $q->execute([$fid,$start,$end,$target,$receipts,$body['notes']??null,(int)$u['id'],$u['role']==='OWNER'?(int)$u['id']:null]);
- outlet_timeline($pdo,$fid,(int)$u['id'],'sales_target','Sales target set',$start.' → '.$end.' · '.number_format($target,2),'sales_target',null,['sales_target'=>$target,'receipt_target'=>$receipts]);
- audit($pdo,(int)$u['id'],'target_save','franchise',(string)$fid,['period_start'=>$start,'period_end'=>$end,'sales_target'=>$target,'receipt_target'=>$receipts]);
- out(['ok'=>true]);
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);
+ $fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $start=(string)($body['period_start']??date('Y-m-01'));$end=(string)($body['period_end']??date('Y-m-t'));
+ if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$start)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end)||strtotime($end)<strtotime($start))out(['ok'=>false,'code'=>'INVALID_TARGET_PERIOD'],422);
+ $target=max(0,(float)($body['sales_target']??0));$receipts=max(0,(int)($body['receipt_target']??0));
+ $phase='begin';
+ try{
+  $pdo->beginTransaction();
+  $phase='lookup';
+  $q=$pdo->prepare("SELECT id FROM outlet_sales_targets WHERE franchise_id=? AND period_start=? AND period_end=? LIMIT 1");
+  $q->execute([$fid,$start,$end]);$existingId=(int)($q->fetchColumn()?:0);
+
+  $phase=$existingId>0?'update':'insert';
+  if($existingId>0){
+   $q=$pdo->prepare("UPDATE outlet_sales_targets SET sales_target=?,receipt_target=?,notes=?,approved_by=?,updated_at=NOW() WHERE id=?");
+   $q->execute([$target,$receipts,$body['notes']??null,$u['role']==='OWNER'?(int)$u['id']:null,$existingId]);
+   $id=$existingId;
+  }else{
+   $q=$pdo->prepare("INSERT INTO outlet_sales_targets(franchise_id,period_start,period_end,sales_target,receipt_target,notes,created_by,approved_by) VALUES(?,?,?,?,?,?,?,?)");
+   $q->execute([$fid,$start,$end,$target,$receipts,$body['notes']??null,(int)$u['id'],$u['role']==='OWNER'?(int)$u['id']:null]);
+   $id=(int)$pdo->lastInsertId();
+  }
+
+  $phase='timeline';
+  outlet_timeline($pdo,$fid,(int)$u['id'],'sales_target','Sales target set',$start.' → '.$end.' · '.number_format($target,2),'sales_target',$id,['sales_target'=>$target,'receipt_target'=>$receipts]);
+
+  $phase='audit';
+  audit($pdo,(int)$u['id'],'target_save','franchise',(string)$fid,['target_id'=>$id,'period_start'=>$start,'period_end'=>$end,'sales_target'=>$target,'receipt_target'=>$receipts]);
+
+  $pdo->commit();
+  out(['ok'=>true,'id'=>$id,'period_start'=>$start,'period_end'=>$end,'sales_target'=>$target,'receipt_target'=>$receipts]);
+ }catch(Throwable $e){
+  if($pdo->inTransaction())$pdo->rollBack();
+  error_log('operations.target.save failed phase='.$phase.' type='.get_class($e).' code='.$e->getCode());
+  out(['ok'=>false,'code'=>'OPERATIONS_TARGET_SAVE_FAILED','phase'=>$phase],500);
+ }
 }
 
 if($route==='operations.inventory_policy.save' && $method==='POST'){
- csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
- $pid=max(0,(int)($body['product_pack_id']??0));$min=max(1,(float)($body['min_days_cover']??7));$target=max($min,(float)($body['target_days_cover']??21));$max=max($target,(float)($body['max_days_cover']??60));$dead=max(7,(int)($body['dead_stock_days']??30));
- $q=$pdo->prepare("INSERT INTO outlet_inventory_policies(franchise_id,product_pack_id,min_days_cover,target_days_cover,max_days_cover,dead_stock_days,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?)
-   ON DUPLICATE KEY UPDATE min_days_cover=VALUES(min_days_cover),target_days_cover=VALUES(target_days_cover),max_days_cover=VALUES(max_days_cover),dead_stock_days=VALUES(dead_stock_days),updated_by=VALUES(updated_by),updated_at=NOW()");
- $q->execute([$fid,$pid,$min,$target,$max,$dead,(int)$u['id'],(int)$u['id']]);
- audit($pdo,(int)$u['id'],'inventory_policy_save','franchise',(string)$fid,['product_pack_id'=>$pid,'min_days_cover'=>$min,'target_days_cover'=>$target,'max_days_cover'=>$max,'dead_stock_days'=>$dead]);
- out(['ok'=>true]);
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);
+ $fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $pid=max(0,(int)($body['product_pack_id']??0));
+ $min=max(1,(float)($body['min_days_cover']??7));$target=max($min,(float)($body['target_days_cover']??21));$max=max($target,(float)($body['max_days_cover']??60));$dead=max(7,(int)($body['dead_stock_days']??30));
+ if($pid>0){$q=$pdo->prepare("SELECT id FROM product_packs WHERE id=? LIMIT 1");$q->execute([$pid]);if(!$q->fetchColumn())out(['ok'=>false,'code'=>'PACK_NOT_FOUND'],404);}
+ $phase='begin';
+ try{
+  $pdo->beginTransaction();
+  $phase='lookup';
+  $q=$pdo->prepare("SELECT id FROM outlet_inventory_policies WHERE franchise_id=? AND product_pack_id=? LIMIT 1");$q->execute([$fid,$pid]);$existingId=(int)($q->fetchColumn()?:0);
+
+  $phase=$existingId>0?'update':'insert';
+  if($existingId>0){
+   $q=$pdo->prepare("UPDATE outlet_inventory_policies SET min_days_cover=?,target_days_cover=?,max_days_cover=?,dead_stock_days=?,updated_by=?,updated_at=NOW() WHERE id=?");
+   $q->execute([$min,$target,$max,$dead,(int)$u['id'],$existingId]);$id=$existingId;
+  }else{
+   $q=$pdo->prepare("INSERT INTO outlet_inventory_policies(franchise_id,product_pack_id,min_days_cover,target_days_cover,max_days_cover,dead_stock_days,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?)");
+   $q->execute([$fid,$pid,$min,$target,$max,$dead,(int)$u['id'],(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+  }
+
+  $phase='audit';
+  audit($pdo,(int)$u['id'],'inventory_policy_save','franchise',(string)$fid,['policy_id'=>$id,'product_pack_id'=>$pid,'min_days_cover'=>$min,'target_days_cover'=>$target,'max_days_cover'=>$max,'dead_stock_days'=>$dead]);
+
+  $pdo->commit();
+  out(['ok'=>true,'id'=>$id,'product_pack_id'=>$pid,'min_days_cover'=>$min,'target_days_cover'=>$target,'max_days_cover'=>$max,'dead_stock_days'=>$dead]);
+ }catch(Throwable $e){
+  if($pdo->inTransaction())$pdo->rollBack();
+  error_log('operations.inventory_policy.save failed phase='.$phase.' type='.get_class($e).' code='.$e->getCode());
+  out(['ok'=>false,'code'=>'OPERATIONS_INVENTORY_POLICY_SAVE_FAILED','phase'=>$phase],500);
+ }
 }
 
 if($route==='operations.stock_count.save' && $method==='POST'){
