@@ -1040,6 +1040,196 @@ if($route==='operations.stock_count.save' && $method==='POST'){
 
 
 
+
+function ops_v2_round3_payload(PDO $pdo,string $period): array {
+ if(!preg_match('/^\d{4}-\d{2}$/',$period))out(['ok'=>false,'code'=>'INVALID_PERIOD'],422);
+ $start=$period.'-01';$end=date('Y-m-t',strtotime($start));
+ $qs=$pdo->quote($start);$qe=$pdo->quote($end);
+ $rows=$pdo->query("SELECT f.id franchise_id,f.code outlet_code,f.name outlet,COALESCE(NULLIF(op.division,''),'Unassigned') division,
+   COALESCE(NULLIF(f.district,''),'Unassigned') district,COALESCE(NULLIF(f.upazila,''),'Unassigned') upazila,f.status,f.opened_at,
+   COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) sales_30d,
+   COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND DATE(ps.sold_at) BETWEEN {$qs} AND {$qe}),0) period_sales,
+   (SELECT MAX(ps.sold_at) FROM pos_sales ps WHERE ps.franchise_id=f.id) last_sale_at,
+   COALESCE((SELECT ost.sales_target FROM outlet_sales_targets ost WHERE ost.franchise_id=f.id AND ost.period_start<={$qe} AND ost.period_end>={$qs} ORDER BY ost.id DESC LIMIT 1),0) sales_target,
+   COALESCE((SELECT h.total_score FROM outlet_health_checks h WHERE h.franchise_id=f.id ORDER BY h.checked_at DESC,h.id DESC LIMIT 1),0) health_score,
+   COALESCE((SELECT COUNT(*) FROM (SELECT il.location_id,il.product_pack_id,SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) qty FROM inventory_ledger il WHERE il.location_type='franchise' GROUP BY il.location_id,il.product_pack_id HAVING qty>0) sx WHERE sx.location_id=f.id),0) stock_lines,
+   COALESCE((SELECT COUNT(DISTINCT psi.product_pack_id) FROM pos_sales ps JOIN pos_sale_items psi ON psi.pos_sale_id=ps.id WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) rotated_lines,
+   COALESCE((SELECT COUNT(*) FROM settlements s WHERE s.franchise_id=f.id AND s.status<>'paid' AND DATEDIFF(CURDATE(),s.period_end)>7),0) overdue_settlements,
+   COALESCE((SELECT COUNT(*) FROM operations_alerts a WHERE a.franchise_id=f.id AND a.status='open'),0) open_alerts,
+   COALESCE((SELECT COUNT(*) FROM operations_alerts a WHERE a.franchise_id=f.id AND a.status='open' AND a.severity='critical'),0) critical_alerts,
+   COALESCE((SELECT COUNT(*) FROM support_tickets t WHERE t.franchise_id=f.id AND t.category='customer' AND t.status NOT IN('resolved','closed','cancelled')),0) open_complaints,
+   COALESCE((SELECT COUNT(*) FROM operations_tasks t WHERE t.franchise_id=f.id AND t.status NOT IN('done','cancelled') AND t.due_at<NOW()),0) overdue_tasks,
+   COALESCE((SELECT COUNT(*) FROM outlet_checklist_items ci WHERE ci.franchise_id=f.id AND ci.checklist_type='closure'),0) closure_total,
+   COALESCE((SELECT SUM(ci.completed=1) FROM outlet_checklist_items ci WHERE ci.franchise_id=f.id AND ci.checklist_type='closure'),0) closure_done,
+   COALESCE((SELECT COUNT(*) FROM documents d WHERE d.reference_type IN('franchise','outlet') AND d.reference_id=f.id AND d.status='active'),0) document_count,
+   COALESCE((SELECT SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty*il.unit_value WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty*il.unit_value ELSE il.qty*il.unit_value END) FROM inventory_ledger il WHERE il.location_type='franchise' AND il.location_id=f.id),0) stock_value,
+   COALESCE((SELECT COUNT(*) FROM settlements s WHERE s.franchise_id=f.id AND s.status<>'paid'),0) unpaid_settlements,
+   ch.id handover_id,ch.handover_status,ch.stock_status handover_stock_status,ch.dues_status handover_dues_status,ch.documents_status handover_documents_status,ch.evidence_ref handover_evidence_ref,ch.note handover_note,ch.prepared_at,ch.approved_at
+  FROM franchises f LEFT JOIN outlet_profiles op ON op.franchise_id=f.id LEFT JOIN operations_closure_handovers ch ON ch.franchise_id=f.id
+  WHERE f.status<>'closed' ORDER BY f.name")->fetchAll();
+
+ $district=[];foreach($rows as $r){$k=$r['division'].'|'.$r['district'];if(!isset($district[$k]))$district[$k]=['sales'=>0.0,'count'=>0];$district[$k]['sales']+=(float)$r['sales_30d'];$district[$k]['count']++;}
+ $bench=[];$forecast=[];
+ foreach($rows as $r){
+  $fid=(int)$r['franchise_id'];$k=$r['division'].'|'.$r['district'];$avg=$district[$k]['count']?($district[$k]['sales']/$district[$k]['count']):0;
+  $sales30=(float)$r['sales_30d'];$salesIndex=$avg>0?min(100,$sales30/$avg*100):($sales30>0?100:0);
+  $rotation=(int)$r['stock_lines']>0?min(100,(int)$r['rotated_lines']/(int)$r['stock_lines']*100):0;
+  $settle=(int)$r['overdue_settlements']===0?100:max(0,100-((int)$r['overdue_settlements']*25));
+  $health=max(0,min(100,(float)$r['health_score']));
+  $score=round($salesIndex*.40+$health*.25+$rotation*.20+$settle*.15,1);
+  $target=(float)$r['sales_target'];$periodSales=(float)$r['period_sales'];$ach=$target>0?round($periodSales/$target*100,1):0;
+  $bench[]=[
+   'franchise_id'=>$fid,'outlet_code'=>$r['outlet_code'],'outlet'=>$r['outlet'],'division'=>$r['division'],'district'=>$r['district'],'upazila'=>$r['upazila'],
+   'sales_30d'=>round($sales30,2),'district_avg_sales'=>round($avg,2),'sales_index'=>round($salesIndex,1),'health_score'=>round($health,1),
+   'stock_rotation_score'=>round($rotation,1),'settlement_score'=>round($settle,1),'benchmark_index'=>$score,'sales_target'=>$target,'period_sales'=>$periodSales,'target_achievement'=>$ach
+  ];
+
+  if(in_array($r['status'],['active','watch','critical'],true)){
+   $last=$r['last_sale_at']?:($r['opened_at']?($r['opened_at'].' 00:00:00'):null);$inactive=$last?max(0,(int)floor((time()-strtotime($last))/86400)):9999;
+   $risk=0;$drivers=[];
+   if($inactive>=7){$risk+=30;$drivers[]='POS inactive 7+d';}elseif($inactive>=3){$risk+=15;$drivers[]='POS inactive 3+d';}
+   if((int)$r['critical_alerts']>0){$risk+=25;$drivers[]='critical alerts';}elseif((int)$r['open_alerts']>0){$risk+=10;$drivers[]='open alerts';}
+   if((int)$r['overdue_settlements']>0){$risk+=20;$drivers[]='overdue settlement';}
+   if((int)$r['open_complaints']>=3){$risk+=10;$drivers[]='complaint spike';}elseif((int)$r['open_complaints']>0){$risk+=5;$drivers[]='open complaint';}
+   if((int)$r['overdue_tasks']>0){$risk+=10;$drivers[]='overdue tasks';}
+   if($health<60){$risk+=15;$drivers[]='low health';}elseif($health<75){$risk+=8;$drivers[]='health watch';}
+   $risk=min(100,$risk);$state=$risk>=60?'critical':($risk>=30?'watch':'stable');$risk30=min(100,$risk+($risk>0?10:0));$state30=$risk30>=60?'critical':($risk30>=30?'watch':'stable');
+   $forecast[]=['franchise_id'=>$fid,'outlet_code'=>$r['outlet_code'],'outlet'=>$r['outlet'],'district'=>$r['district'],'current_status'=>$r['status'],
+    'risk_score_7d'=>$risk,'forecast_7d'=>$state,'risk_score_30d'=>$risk30,'forecast_30d'=>$state30,'inactive_days'=>$inactive,'drivers'=>$drivers?implode(', ',$drivers):'No material risk signal'];
+  }
+ }
+ usort($bench,fn($a,$b)=>$b['benchmark_index']<=>$a['benchmark_index']);foreach($bench as $i=>&$r)$r['network_rank']=$i+1;unset($r);
+ usort($forecast,fn($a,$b)=>$b['risk_score_30d']<=>$a['risk_score_30d']);
+
+ $performance=$pdo->query("SELECT pr.id,pr.period_start,pr.period_end,pr.sales_growth_score,pr.stock_rotation_score,pr.outlet_health_score,pr.settlement_score,pr.retention_score,pr.compliance_score,pr.total_score,pr.distributable_profit,pr.performance_share_percent,pr.performance_share_amount,pr.status,u.name user_name,a.name approved_by_name
+  FROM performance_records pr LEFT JOIN users u ON u.id=pr.user_id LEFT JOIN users a ON a.id=pr.approved_by WHERE pr.role_code='OPERATIONS' ORDER BY pr.period_end DESC,pr.id DESC LIMIT 12")->fetchAll();
+
+ $approvals=$pdo->query("SELECT a.id,a.approval_type,a.reference_type,a.reference_id,f.code outlet_code,f.name outlet,a.requested_by,u.name requested_by_name,a.assigned_role_code,a.status,a.request_json,a.decision_note,a.decided_by,d.name decided_by_name,a.decided_at,a.created_at
+  FROM approvals a LEFT JOIN franchises f ON a.reference_type='franchise' AND f.id=a.reference_id LEFT JOIN users u ON u.id=a.requested_by LEFT JOIN users d ON d.id=a.decided_by
+  WHERE a.approval_type LIKE 'operations_%' ORDER BY FIELD(a.status,'pending','approved','rejected','cancelled'),a.id DESC LIMIT 250")->fetchAll();
+ foreach($approvals as &$r){$j=json_decode((string)($r['request_json']??''),true);$r['request']=$j?:[];}unset($r);
+
+ $evidence=$pdo->query("SELECT d.id,d.document_type,d.title,d.reference_type,d.reference_id,f.code outlet_code,f.name outlet,d.file_path evidence_ref,d.status,u.name created_by_name,d.created_at
+  FROM documents d LEFT JOIN franchises f ON d.reference_type IN('franchise','outlet') AND f.id=d.reference_id LEFT JOIN users u ON u.id=d.created_by
+  WHERE d.document_type LIKE 'operations_%' OR d.document_type LIKE 'closure_%' OR d.document_type IN('visit_evidence','settlement_proof','compliance_evidence','marketing_proof','training_certificate')
+  ORDER BY d.id DESC LIMIT 300")->fetchAll();
+
+ $routes=$pdo->query("SELECT nr.id,nr.source_type,nr.source_id,nr.franchise_id,f.code outlet_code,f.name outlet,nr.target_role_code,nr.severity,nr.title,nr.message,nr.notification_id,nr.route_status,u.name routed_by_name,nr.routed_at
+  FROM operations_notification_routes nr LEFT JOIN franchises f ON f.id=nr.franchise_id LEFT JOIN users u ON u.id=nr.routed_by ORDER BY nr.id DESC LIMIT 250")->fetchAll();
+
+ $closures=[];foreach($rows as $r){
+  $total=(int)$r['closure_total'];$done=(int)$r['closure_done'];$progress=$total?round($done/$total*100):0;
+  $hstatus=$r['handover_status']?:'not_started';$managementReady=$progress>=100&&abs((float)$r['stock_value'])<0.01&&(int)$r['unpaid_settlements']===0&&$hstatus==='approved';
+  $closures[]=['franchise_id'=>(int)$r['franchise_id'],'outlet_code'=>$r['outlet_code'],'outlet'=>$r['outlet'],'district'=>$r['district'],'status'=>$r['status'],
+   'closure_progress'=>$progress,'stock_value'=>round((float)$r['stock_value'],2),'unpaid_settlements'=>(int)$r['unpaid_settlements'],'document_count'=>(int)$r['document_count'],
+   'handover_id'=>$r['handover_id'],'handover_status'=>$hstatus,'stock_status'=>$r['handover_stock_status']?:'pending','dues_status'=>$r['handover_dues_status']?:'pending',
+   'documents_status'=>$r['handover_documents_status']?:'pending','evidence_ref'=>$r['handover_evidence_ref'],'note'=>$r['handover_note'],'prepared_at'=>$r['prepared_at'],'approved_at'=>$r['approved_at'],
+   'management_readiness'=>$managementReady?'ready_to_close':($progress>=100?'handover_pending':'checklist_pending')];
+ }
+
+ $actions=[];
+ foreach($forecast as $r)if($r['forecast_30d']!=='stable')$actions[]=['priority'=>$r['forecast_30d']==='critical'?'critical':'high','action_type'=>'health_forecast','franchise_id'=>$r['franchise_id'],'outlet'=>$r['outlet'],'title'=>'Health forecast | '.$r['forecast_30d'],'detail'=>$r['drivers']];
+ foreach($approvals as $r)if($r['status']==='pending')$actions[]=['priority'=>'high','action_type'=>'owner_approval','franchise_id'=>(int)($r['reference_id']??0),'outlet'=>$r['outlet']??'','title'=>'Approval pending | '.str_replace('operations_','',$r['approval_type']),'detail'=>$r['request']['reason']??'Owner decision required'];
+ foreach($closures as $r)if($r['handover_status']==='ready')$actions[]=['priority'=>'high','action_type'=>'closure_handover','franchise_id'=>$r['franchise_id'],'outlet'=>$r['outlet'],'title'=>'Closure handover ready','detail'=>'Owner approval pending'];
+ usort($actions,fn($a,$b)=>(['critical'=>0,'high'=>1,'medium'=>2,'low'=>3][$a['priority']]??9)<=>(['critical'=>0,'high'=>1,'medium'=>2,'low'=>3][$b['priority']]??9));
+
+ $metrics=['benchmarked_outlets'=>count($bench),'watch_forecast'=>count(array_filter($forecast,fn($r)=>$r['forecast_30d']==='watch')),
+  'critical_forecast'=>count(array_filter($forecast,fn($r)=>$r['forecast_30d']==='critical')),'pending_approvals'=>count(array_filter($approvals,fn($r)=>$r['status']==='pending')),
+  'evidence_items'=>count($evidence),'ready_handovers'=>count(array_filter($closures,fn($r)=>$r['handover_status']==='ready')),'routed_notifications'=>count($routes)];
+ $outlets=array_map(fn($r)=>['id'=>(int)$r['franchise_id'],'code'=>$r['outlet_code'],'name'=>$r['outlet'],'district'=>$r['district'],'status'=>$r['status']],$rows);
+ return ['period'=>$period,'period_start'=>$start,'period_end'=>$end,'metrics'=>$metrics,'benchmarks'=>$bench,'forecast'=>$forecast,'performance'=>$performance,'approvals'=>$approvals,'evidence'=>$evidence,'notification_routes'=>$routes,'closures'=>$closures,'actions'=>array_slice($actions,0,150),'outlets'=>$outlets];
+}
+
+if($route==='operations.round3'){
+ outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $period=(string)($_GET['period']??date('Y-m'));
+ out(['ok'=>true]+ops_v2_round3_payload($pdo,$period));
+}
+
+if($route==='operations.approval.request' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);$type=(string)($body['approval_type']??'');
+ $allowed=['margin_exception','stock_adjustment','outlet_suspension','special_discount','exception_expense','closure_approval'];
+ if($fid<=0||!in_array($type,$allowed,true))out(['ok'=>false,'code'=>'INVALID_APPROVAL_REQUEST'],422);$fr=outlet_exists($pdo,$fid);
+ $reason=trim((string)($body['reason']??''));if($reason==='')out(['ok'=>false,'code'=>'APPROVAL_REASON_REQUIRED'],422);
+ $payload=['reason'=>$reason,'amount'=>max(0,(float)($body['amount']??0)),'requested_value'=>$body['requested_value']??null,'evidence_ref'=>$body['evidence_ref']??null];
+ $q=$pdo->prepare("INSERT INTO approvals(approval_type,reference_type,reference_id,requested_by,assigned_role_code,status,request_json) VALUES(?,'franchise',?,?,'OWNER','pending',?)");
+ $q->execute(['operations_'.$type,$fid,(int)$u['id'],json_encode($payload,JSON_UNESCAPED_UNICODE)]);$id=(int)$pdo->lastInsertId();
+ $title='Operations approval | '.str_replace('_',' ',$type).' | '.$fr['name'];$message=$reason;
+ $q=$pdo->prepare("INSERT INTO notifications(role_code,severity,title,message) VALUES('OWNER','warning',?,?)");$q->execute([$title,$message]);$nid=(int)$pdo->lastInsertId();
+ $q=$pdo->prepare("INSERT INTO operations_notification_routes(source_type,source_id,franchise_id,target_role_code,severity,title,message,notification_id,route_status,routed_by) VALUES('approval',?,?,'OWNER','warning',?,?,?,'sent',?)");
+ $q->execute([$id,$fid,$title,$message,$nid,(int)$u['id']]);
+ outlet_timeline($pdo,$fid,(int)$u['id'],'approval','Owner approval requested',str_replace('_',' ',$type).' | '.$reason,'approval',$id);
+ audit($pdo,(int)$u['id'],'request','operations_approval',(string)$id,['franchise_id'=>$fid,'approval_type'=>$type]);
+ out(['ok'=>true,'id'=>$id,'status'=>'pending'],201);
+}
+
+if($route==='operations.approval.decide' && $method==='POST'){
+ csrf();$u=owner();$id=(int)($body['id']??0);$status=(string)($body['status']??'');if($id<=0||!in_array($status,['approved','rejected'],true))out(['ok'=>false,'code'=>'INVALID_APPROVAL_DECISION'],422);
+ $q=$pdo->prepare("SELECT * FROM approvals WHERE id=? AND approval_type LIKE 'operations_%' LIMIT 1");$q->execute([$id]);$a=$q->fetch();if(!$a)out(['ok'=>false,'code'=>'APPROVAL_NOT_FOUND'],404);if($a['status']!=='pending')out(['ok'=>false,'code'=>'APPROVAL_ALREADY_DECIDED'],422);
+ $note=trim((string)($body['decision_note']??''));
+ $q=$pdo->prepare("UPDATE approvals SET status=?,decision_note=?,decided_by=?,decided_at=NOW() WHERE id=? AND status='pending'");$q->execute([$status,$note?:null,(int)$u['id'],$id]);
+ $targetUser=(int)($a['requested_by']??0);$title='Operations approval '.$status;$message=str_replace('operations_','',$a['approval_type']).($note?' | '.$note:'');
+ if($targetUser>0){$q=$pdo->prepare("INSERT INTO notifications(user_id,severity,title,message) VALUES(?,?,?,?)");$q->execute([$targetUser,$status==='approved'?'success':'warning',$title,$message]);$nid=(int)$pdo->lastInsertId();}else{$nid=null;}
+ $fid=(int)($a['reference_id']??0);if($fid>0){outlet_timeline($pdo,$fid,(int)$u['id'],'approval','Approval '.$status,$message,'approval',$id);}
+ audit($pdo,(int)$u['id'],'decision','operations_approval',(string)$id,['status'=>$status,'decision_note'=>$note]);
+ out(['ok'=>true,'id'=>$id,'status'=>$status]);
+}
+
+if($route==='operations.evidence.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $type=(string)($body['evidence_type']??'other');$allowed=['visit_evidence','settlement_proof','compliance_evidence','closure_handover','marketing_proof','training_certificate','other'];
+ if(!in_array($type,$allowed,true))$type='other';$title=trim((string)($body['title']??''));$ref=trim((string)($body['evidence_ref']??''));
+ if($title===''||$ref==='')out(['ok'=>false,'code'=>'EVIDENCE_REQUIRED'],422);
+ $docType=$type==='other'?'operations_evidence':'operations_'.$type;
+ $q=$pdo->prepare("INSERT INTO documents(document_type,title,reference_type,reference_id,file_path,status,created_by) VALUES(?,?,'franchise',?,?,'active',?)");$q->execute([$docType,$title,$fid,$ref,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ outlet_timeline($pdo,$fid,(int)$u['id'],'evidence','Operations evidence registered',$title,'document',$id,['evidence_type'=>$type]);
+ audit($pdo,(int)$u['id'],'create','operations_evidence',(string)$id,['franchise_id'=>$fid,'evidence_type'=>$type]);
+ out(['ok'=>true,'id'=>$id,'document_type'=>$docType],201);
+}
+
+if($route==='operations.notification.route' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$target=(string)($body['target_role_code']??'');$severity=(string)($body['severity']??'info');
+ if(!in_array($target,['OWNER','FINANCE','OPERATIONS'],true)||!in_array($severity,['info','success','warning','critical'],true))out(['ok'=>false,'code'=>'INVALID_NOTIFICATION_ROUTE'],422);
+ $fid=(int)($body['franchise_id']??0);if($fid>0)outlet_exists($pdo,$fid);$title=trim((string)($body['title']??''));$message=trim((string)($body['message']??''));
+ if($title===''||$message==='')out(['ok'=>false,'code'=>'NOTIFICATION_CONTENT_REQUIRED'],422);
+ $q=$pdo->prepare("INSERT INTO notifications(role_code,severity,title,message) VALUES(?,?,?,?)");$q->execute([$target,$severity,$title,$message]);$nid=(int)$pdo->lastInsertId();
+ $q=$pdo->prepare("INSERT INTO operations_notification_routes(source_type,source_id,franchise_id,target_role_code,severity,title,message,notification_id,route_status,routed_by) VALUES(?,?,?,?,?,?,?,?, 'sent',?)");
+ $q->execute([$body['source_type']??'operations',($body['source_id']??null)?:null,$fid?:null,$target,$severity,$title,$message,$nid,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ if($fid>0)outlet_timeline($pdo,$fid,(int)$u['id'],'notification','Management notification routed',$target.' | '.$title,'notification',$nid);
+ audit($pdo,(int)$u['id'],'route','operations_notification',(string)$id,['target_role'=>$target,'severity'=>$severity,'franchise_id'=>$fid?:null]);
+ out(['ok'=>true,'id'=>$id,'notification_id'=>$nid,'target_role_code'=>$target],201);
+}
+
+if($route==='operations.closure.handover.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);$fr=outlet_exists($pdo,$fid);
+ $handover=(string)($body['handover_status']??'preparing');$stock=(string)($body['stock_status']??'pending');$dues=(string)($body['dues_status']??'pending');$docs=(string)($body['documents_status']??'pending');
+ if(!in_array($handover,['preparing','ready','approved','reopened'],true)||!in_array($stock,['pending','counted','reconciled','returned'],true)||!in_array($dues,['pending','review','reconciled'],true)||!in_array($docs,['pending','partial','complete'],true))out(['ok'=>false,'code'=>'INVALID_HANDOVER_STATE'],422);
+ if($handover==='approved'&&$u['role']!=='OWNER')out(['ok'=>false,'code'=>'OWNER_APPROVAL_REQUIRED'],403);
+ if($handover==='ready'&&!in_array($stock,['reconciled','returned'],true))out(['ok'=>false,'code'=>'HANDOVER_STOCK_NOT_RECONCILED'],422);
+ if($handover==='ready'&&$dues!=='reconciled')out(['ok'=>false,'code'=>'HANDOVER_DUES_NOT_RECONCILED'],422);
+ if($handover==='ready'&&$docs!=='complete')out(['ok'=>false,'code'=>'HANDOVER_DOCUMENTS_INCOMPLETE'],422);
+ $approved=$handover==='approved';$q=$pdo->prepare("INSERT INTO operations_closure_handovers(franchise_id,handover_status,stock_status,dues_status,documents_status,evidence_ref,note,prepared_by,approved_by,prepared_at,approved_at)
+  VALUES(?,?,?,?,?,?,?,?,?,NOW(),?) ON DUPLICATE KEY UPDATE handover_status=VALUES(handover_status),stock_status=VALUES(stock_status),dues_status=VALUES(dues_status),documents_status=VALUES(documents_status),evidence_ref=VALUES(evidence_ref),note=VALUES(note),prepared_by=VALUES(prepared_by),approved_by=VALUES(approved_by),prepared_at=NOW(),approved_at=VALUES(approved_at)");
+ $q->execute([$fid,$handover,$stock,$dues,$docs,$body['evidence_ref']??null,$body['note']??null,(int)$u['id'],$approved?(int)$u['id']:null,$approved?date('Y-m-d H:i:s'):null]);
+ $q=$pdo->prepare("SELECT id FROM operations_closure_handovers WHERE franchise_id=?");$q->execute([$fid]);$id=(int)$q->fetchColumn();
+ if($handover==='ready'){
+  $title='Closure handover ready | '.$fr['name'];$message='Operations completed stock, dues and documents handover. Owner decision required.';
+  $q=$pdo->prepare("INSERT INTO notifications(role_code,severity,title,message) VALUES('OWNER','warning',?,?)");$q->execute([$title,$message]);$nid=(int)$pdo->lastInsertId();
+  $q=$pdo->prepare("INSERT INTO operations_notification_routes(source_type,source_id,franchise_id,target_role_code,severity,title,message,notification_id,route_status,routed_by) VALUES('closure_handover',?,?,'OWNER','warning',?,?,?,'sent',?)");$q->execute([$id,$fid,$title,$message,$nid,(int)$u['id']]);
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'closure_handover','Closure handover '.$handover,'Stock '.$stock.' | dues '.$dues.' | documents '.$docs,'closure_handover',$id);
+ audit($pdo,(int)$u['id'],'save','operations_closure_handover',(string)$id,['franchise_id'=>$fid,'handover_status'=>$handover]);
+ out(['ok'=>true,'id'=>$id,'handover_status'=>$handover]);
+}
+
+if($route==='operations.management.snapshot' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$period=(string)($body['period']??date('Y-m'));$payload=ops_v2_round3_payload($pdo,$period);
+ $q=$pdo->prepare("INSERT INTO operations_benchmark_snapshots(period_start,period_end,snapshot_type,payload_json,generated_by) VALUES(?,?,'management_closure',?,?)");
+ $q->execute([$payload['period_start'],$payload['period_end'],json_encode(['metrics'=>$payload['metrics'],'benchmarks'=>$payload['benchmarks'],'forecast'=>$payload['forecast'],'performance'=>$payload['performance']],JSON_UNESCAPED_UNICODE),(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ audit($pdo,(int)$u['id'],'snapshot','operations_management',(string)$id,['period'=>$period]);
+ out(['ok'=>true,'id'=>$id,'period'=>$period],201);
+}
+
 if($route==='operations.round2'){
  $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
  $today=date('Y-m-d');$monthStart=date('Y-m-01');$monthEnd=date('Y-m-t');$day=(int)date('j');$daysIn=(int)date('t');$daysLeft=max(1,$daysIn-$day+1);
