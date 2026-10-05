@@ -497,7 +497,7 @@ if($route==='operations.task.update' && $method==='POST'){
  $q=$pdo->prepare("UPDATE operations_tasks SET status=?,priority=?,assigned_user_id=?,due_at=?,detail=?,completed_at=IF(?='done',COALESCE(completed_at,NOW()),NULL),escalation_level=?,escalated_at=IF(?,NOW(),escalated_at) WHERE id=?");
  $q->execute([$status,$priority,$assignee,$due,$body['detail']??$before['detail'],$status,$level,$escalate?1:0,$id]);
  if(!empty($before['franchise_id']))outlet_timeline($pdo,(int)$before['franchise_id'],(int)$u['id'],'task','Task '.$status,$before['title'],'operations_task',$id,['priority'=>$priority,'escalation_level'=>$level]);
- audit($pdo,(int)$u['id'],'update','operations_task',(string)$id,['status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'escalation_level'=>$level]);
+ audit($pdo,(int)$u['id'],'update','operations_task',(string)$id,['status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'due_at'=>$due,'escalation_level'=>$level]);
  out(['ok'=>true,'id'=>$id,'status'=>$status,'escalation_level'=>$level]);
 }
 
@@ -541,10 +541,11 @@ if($route==='operations.ticket.update' && $method==='POST'){
  $status=(string)($body['status']??$before['status']);if(!in_array($status,['open','assigned','in_progress','waiting','resolved','closed','cancelled'],true))out(['ok'=>false,'code'=>'INVALID_TICKET_STATUS'],422);
  $priority=ops_priority((string)($body['priority']??$before['priority']));$assignee=array_key_exists('assigned_user_id',$body)?ops_assignee($pdo,$body['assigned_user_id']):(($before['assigned_user_id']??null)?(int)$before['assigned_user_id']:null);
  $escalate=!empty($body['escalate']);$level=(int)$before['escalation_level']+($escalate?1:0);$resolution=$body['resolution']??$before['resolution'];
+ $due=array_key_exists('due_at',$body)?ops_sla_due($priority,($body['due_at']??null)?:null):$before['due_at'];
  $firstResponse=in_array($status,['assigned','in_progress','waiting','resolved','closed'],true)?'COALESCE(first_response_at,NOW())':'first_response_at';
  $resolved=in_array($status,['resolved','closed'],true)?'COALESCE(resolved_at,NOW())':($status==='open'?'NULL':'resolved_at');
- $q=$pdo->prepare("UPDATE support_tickets SET status=?,priority=?,assigned_user_id=?,resolution=?,first_response_at={$firstResponse},resolved_at={$resolved},escalation_level=?,escalated_at=IF(?,NOW(),escalated_at) WHERE id=?");
- $q->execute([$status,$priority,$assignee,$resolution,$level,$escalate?1:0,$id]);
+ $q=$pdo->prepare("UPDATE support_tickets SET status=?,priority=?,assigned_user_id=?,due_at=?,resolution=?,first_response_at={$firstResponse},resolved_at={$resolved},escalation_level=?,escalated_at=IF(?,NOW(),escalated_at) WHERE id=?");
+ $q->execute([$status,$priority,$assignee,$due,$resolution,$level,$escalate?1:0,$id]);
  $type=$escalate?'escalation':(in_array($status,['resolved','closed'],true)?'resolution':'status');
  $q=$pdo->prepare("INSERT INTO support_ticket_updates(support_ticket_id,update_type,note,old_status,new_status,created_by) VALUES(?,?,?,?,?,?)");
  $q->execute([$id,$type,$body['note']??($escalate?'Escalated':'Status updated'),$before['status'],$status,(int)$u['id']]);
@@ -587,6 +588,16 @@ if($route==='operations.compliance.save' && $method==='POST'){
  out(['ok'=>true,'id'=>$id,'overall_score'=>$overall,'status'=>$status],201);
 }
 
+
+
+if($route==='operations.compliance.resolve' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$id=(int)($body['id']??0);
+ $q=$pdo->prepare("SELECT id,franchise_id,status,corrective_action FROM outlet_compliance_checks WHERE id=?");$q->execute([$id]);$row=$q->fetch();if(!$row)out(['ok'=>false,'code'=>'COMPLIANCE_NOT_FOUND'],404);
+ $q=$pdo->prepare("UPDATE outlet_compliance_checks SET resolved_at=COALESCE(resolved_at,NOW()) WHERE id=?");$q->execute([$id]);
+ outlet_timeline($pdo,(int)$row['franchise_id'],(int)$u['id'],'compliance','Compliance corrective action resolved',$row['corrective_action']?:'Compliance issue resolved','compliance_check',$id);
+ audit($pdo,(int)$u['id'],'resolve','compliance_check',(string)$id,['franchise_id'=>(int)$row['franchise_id']]);
+ out(['ok'=>true,'id'=>$id]);
+}
 
 if($route==='operations.marketing.save' && $method==='POST'){
  csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
