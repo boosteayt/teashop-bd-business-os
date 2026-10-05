@@ -37,43 +37,42 @@ function ts(?string $value=null): string {
 
 final class ApiClient {
  private string $base;
- private string $cookie;
+ private CurlHandle $ch;
  private ?string $csrf=null;
  public function __construct(string $base){
   $this->base=$base;
-  $tmp=tempnam(sys_get_temp_dir(),'tsb-e2e-cookie-');
-  if($tmp===false) fail('COOKIE_FILE_FAILED');
-  $this->cookie=$tmp;
- }
- public function __destruct(){ if(is_file($this->cookie)) @unlink($this->cookie); }
- public function request(string $method,string $route,?array $body=null): array {
-  $parts=explode('?',$route,2);
-  $url=$this->base.'/api/index.php?route='.rawurlencode($parts[0]).(isset($parts[1])?'&'.$parts[1]:'');
-  $ch=curl_init($url);
+  $ch=curl_init();
   if($ch===false) fail('CURL_INIT_FAILED');
-  $headers=['Accept: application/json'];
-  if($body!==null)$headers[]='Content-Type: application/json';
-  if($this->csrf!==null && strtoupper($method)!=='GET')$headers[]='X-CSRF-Token: '.$this->csrf;
-  curl_setopt_array($ch,[
-   CURLOPT_CUSTOMREQUEST=>strtoupper($method),
+  $this->ch=$ch;
+  curl_setopt_array($this->ch,[
    CURLOPT_RETURNTRANSFER=>true,
    CURLOPT_HEADER=>false,
-   CURLOPT_HTTPHEADER=>$headers,
-   CURLOPT_COOKIEJAR=>$this->cookie,
-   CURLOPT_COOKIEFILE=>$this->cookie,
+   CURLOPT_COOKIEFILE=>'',
    CURLOPT_CONNECTTIMEOUT=>10,
    CURLOPT_TIMEOUT=>30,
    CURLOPT_FOLLOWLOCATION=>false,
   ]);
-  if($body!==null)curl_setopt($ch,CURLOPT_POSTFIELDS,json_encode($body,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
-  $raw=curl_exec($ch);
-  $error=curl_error($ch);
-  $status=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);
-  curl_close($ch);
+ }
+ public function __destruct(){ curl_close($this->ch); }
+ public function request(string $method,string $route,?array $body=null): array {
+  $parts=explode('?',$route,2);
+  $url=$this->base.'/api/index.php?route='.rawurlencode($parts[0]).(isset($parts[1])?'&'.$parts[1]:'');
+  $headers=['Accept: application/json'];
+  if($body!==null)$headers[]='Content-Type: application/json';
+  if($this->csrf!==null && strtoupper($method)!=='GET')$headers[]='X-CSRF-Token: '.$this->csrf;
+  curl_setopt_array($this->ch,[
+   CURLOPT_URL=>$url,
+   CURLOPT_CUSTOMREQUEST=>strtoupper($method),
+   CURLOPT_HTTPHEADER=>$headers,
+   CURLOPT_POSTFIELDS=>$body!==null?json_encode($body,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null,
+  ]);
+  $raw=curl_exec($this->ch);
+  $error=curl_error($this->ch);
+  $status=(int)curl_getinfo($this->ch,CURLINFO_RESPONSE_CODE);
   if($raw===false) fail('HTTP_TRANSPORT_FAILED: '.$error);
   $data=json_decode((string)$raw,true);
   if(!is_array($data)) fail('NON_JSON_RESPONSE status='.$status);
-  if(isset($data['csrf']) && is_string($data['csrf']))$this->csrf=$data['csrf'];
+  if(isset($data['csrf']) && is_string($data['csrf']) && $data['csrf']!=='')$this->csrf=$data['csrf'];
   return [$status,$data];
  }
  public function expect(string $method,string $route,?array $body,int $status=200,?string $code=null): array {
@@ -86,7 +85,11 @@ final class ApiClient {
  public function login(string $email,string $password): array {
   $r=$this->expect('POST','login',['email'=>$email,'password'=>$password],200);
   ok(!empty($r['csrf']),'LOGIN_CSRF_MISSING');
-  return $r;
+  $me=$this->expect('GET','me',null,200);
+  ok(!empty($me['csrf']),'ME_CSRF_MISSING');
+  $this->csrf=(string)$me['csrf'];
+  ok((int)($me['user']['id']??0)===(int)($r['user']['id']??0),'SESSION_USER_MISMATCH');
+  return $me;
  }
 }
 
