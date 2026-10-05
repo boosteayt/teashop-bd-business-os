@@ -548,6 +548,102 @@ function QCWastage(){
 
 
 
+
+function OperationsRound2View({mode,data,onRefresh,user}){
+ const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
+ const outlets=data.outlets||[],assignees=data.assignees||[],settlements=data.settlements||[];
+ const[follow,setFollow]=React.useState({settlement_id:'',franchise_id:'',channel:'call',status:'contacted',promised_amount:0,promised_date:'',note:'',evidence_ref:''});
+ const[complaint,setComplaint]=React.useState({franchise_id:'',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''});
+ async function act(fn,success){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ function select(label,value,onChange,items){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},items.map(x=>h('option',{key:String(x.value??x),value:x.value??x},x.label??String(x).replaceAll('_',' ')))))}
+ function outletSelect(value,onChange){return select('Outlet',value,onChange,[{value:'',label:'Select outlet'},...outlets.map(x=>({value:x.id,label:x.code+' · '+x.name}))])}
+ const m=data.metrics||{};
+ const stats=h('div',{className:'stats opsV2Round2Stats'},
+  h(Card,{t:'Behind target',v:String(m.behind_target||0),s:'Pace intervention'}),
+  h(Card,{t:'Reorder lines',v:String(m.reorder_lines||0),s:'Low / OOS inventory'}),
+  h(Card,{t:'Overdue settlements',v:String(m.overdue_settlements||0),s:'Collection follow-up'}),
+  h(Card,{t:'Open complaints',v:String(m.open_complaints||0),s:String(m.training_attention||0)+' training attention'})
+ );
+ let body=null;
+ if(mode==='automationv2'){
+  async function run(){await act(()=>api('operations.automation.run',{method:'POST',body:{}}),'Automation scan completed')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Auto Task Engine',tag:'INTELLIGENCE → ACTION'}),
+    h('p',{className:'muted'},'Creates one idempotent Operations task per active signal: 3+ day POS inactivity, overdue settlement, stock risk, expired training and urgent customer complaint. Re-running does not duplicate active tasks.'),
+    h('button',{className:'primary fit',disabled:busy,onClick:run},busy?'Scanning…':'Run automation scan')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Automation task links',tag:'NO DUPLICATES'}),
+    h(DataTable,{rows:data.automation||[],cols:[['outlet','Outlet'],['rule_code','Rule'],['title','Task'],['priority','Priority'],['task_status','Task status'],['due_at','Due'],['last_seen_at','Last seen'],['resolved_at','Signal resolved']],empty:'No automated Operations tasks yet.'})
+   )
+  );
+ }else if(mode==='targetsv2'){
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Target Breakdown',tag:'MONTH → REMAINING → DAILY'}),
+    h(DataTable,{rows:data.targets||[],cols:[['outlet_code','Code'],['outlet','Outlet'],['district','District'],['sales_target','Target',money],['sales_mtd','MTD',money],['achievement','Achievement',v=>Number(v||0).toFixed(1)+'%'],['remaining_target','Remaining',money],['required_daily','Required/day',money],['receipts_mtd','Receipts'],['pace_status','Pace']],empty:'No outlet targets available.'})
+   ),
+   h('div',{className:'notice'},h('b',null,'Target action'),h('span',null,'Target values remain controlled from Sales & Targets. This view converts the monthly number into live remaining and required daily pace.'))
+  );
+ }else if(mode==='reorderv2'){
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Reorder Center',tag:'VELOCITY + DAYS COVER'}),
+    h(DataTable,{rows:data.reorders||[],cols:[['stock_status','State'],['outlet_code','Code'],['outlet','Outlet'],['product','Product'],['grams','Pack'],['stock_qty','Stock'],['daily_velocity','Daily velocity'],['days_cover','Days cover'],['target_days_cover','Target cover'],['suggested_reorder_qty','Suggested qty'],['suggested_reorder_value','MRP value',money]],empty:'No reorder candidates. Stock coverage is healthy.'})
+   ),
+   h('div',{className:'notice'},h('b',null,'Safe recommendation'),h('span',null,'Suggested reorder is operational guidance. It does not create stock adjustments, purchase orders or financial entries automatically.'))
+  );
+ }else if(mode==='settlementfollowup'){
+  function chooseSettlement(v){
+   const r=settlements.find(x=>String(x.id)===String(v));
+   setFollow({...follow,settlement_id:v,franchise_id:r?String(r.franchise_id):'',promised_amount:r?Math.max(0,Number(r.net_payable||0)):0,promised_date:'',note:'',evidence_ref:''});
+  }
+  async function saveFollow(){if(!follow.settlement_id||!follow.franchise_id)return;await act(async()=>{await api('operations.settlement.followup.save',{method:'POST',body:{...follow,settlement_id:Number(follow.settlement_id),franchise_id:Number(follow.franchise_id),promised_amount:Number(follow.promised_amount||0),promised_date:follow.promised_date||null}});setFollow({...follow,settlement_id:'',franchise_id:'',promised_amount:0,promised_date:'',note:'',evidence_ref:''})},'Settlement follow-up saved')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Settlement Follow-up Desk',tag:'PROMISE / CONTACT / EVIDENCE'}),
+    h('div',{className:'formgrid opsV2Form'},
+     select('Open settlement',follow.settlement_id,chooseSettlement,[{value:'',label:'Select settlement'},...settlements.map(x=>({value:x.id,label:x.outlet+' · '+x.period_end+' · '+money(x.net_payable)}))]),
+     select('Channel',follow.channel,v=>setFollow({...follow,channel:v}),['call','whatsapp','email','meeting','visit','internal_note','other']),
+     select('Status',follow.status,v=>setFollow({...follow,status:v}),['contacted','promised','partial','paid_confirmed','disputed','escalated']),
+     h(Field,{label:'Promised amount',type:'number',value:follow.promised_amount,onChange:v=>setFollow({...follow,promised_amount:v})}),
+     h(Field,{label:'Promised date',type:'date',value:follow.promised_date,onChange:v=>setFollow({...follow,promised_date:v})}),
+     h(Field,{label:'Note',value:follow.note,onChange:v=>setFollow({...follow,note:v})}),
+     h(Field,{label:'Evidence ref',value:follow.evidence_ref,onChange:v=>setFollow({...follow,evidence_ref:v})})
+    ),
+    h('button',{className:'primary fit',disabled:busy||!follow.settlement_id,onClick:saveFollow},busy?'Saving…':'Save follow-up')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Open settlement collection queue',tag:'AGING + LAST FOLLOW-UP'}),
+    h(DataTable,{rows:settlements,cols:[['outlet','Outlet'],['period_end','Period end'],['net_payable','Net payable',money],['age_days','Age'],['status','Settlement'],['last_contact_at','Last contact'],['followup_status','Follow-up'],['promised_amount','Promise',money],['promised_date','Promise date'],['followup_note','Note']],empty:'No open settlements.'})
+   )
+  );
+ }else if(mode==='riskcenter'){
+  body=h(React.Fragment,null,stats,
+   h('div',{className:'twocol'},
+    h('section',{className:'panel'},h(Title,{t:'Risk Center',tag:'LIVE ALERT SIGNALS'}),h(DataTable,{rows:data.risk||[],cols:[['severity','Severity'],['outlet','Outlet'],['risk_type','Risk'],['title','Title'],['message','Detail'],['status','State'],['last_seen_at','Last seen']],empty:'No open risk signals.'})),
+    h('section',{className:'panel'},h(Title,{t:'Automation coverage',tag:'ACTIONED RISKS'}),h(DataTable,{rows:(data.automation||[]).filter(x=>!x.resolved_at),cols:[['outlet','Outlet'],['rule_code','Rule'],['priority','Priority'],['task_status','Task'],['due_at','Due']],empty:'No active automated follow-ups.'}))
+   )
+  );
+ }else if(mode==='customercare'){
+  async function createComplaint(){if(!complaint.franchise_id||!complaint.subject)return;await act(async()=>{await api('operations.ticket.create',{method:'POST',body:{franchise_id:Number(complaint.franchise_id),category:'customer',subject:complaint.subject,detail:complaint.detail,priority:complaint.priority,assigned_user_id:complaint.assigned_user_id?Number(complaint.assigned_user_id):null,due_at:complaint.due_at||null}});setComplaint({franchise_id:'',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''})},'Customer care case created')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Customer Care',tag:'COMPLAINT + SLA'}),
+    h('div',{className:'formgrid opsV2Form'},outletSelect(complaint.franchise_id,v=>setComplaint({...complaint,franchise_id:v})),h(Field,{label:'Complaint / subject',value:complaint.subject,onChange:v=>setComplaint({...complaint,subject:v})}),h(Field,{label:'Detail',value:complaint.detail,onChange:v=>setComplaint({...complaint,detail:v})}),select('Priority',complaint.priority,v=>setComplaint({...complaint,priority:v}),['low','medium','high','critical']),select('Assigned to',complaint.assigned_user_id,v=>setComplaint({...complaint,assigned_user_id:v}),[{value:'',label:'Unassigned'},...assignees.map(x=>({value:x.id,label:x.name+' · '+x.role}))]),h(Field,{label:'Due at',type:'datetime-local',value:complaint.due_at,onChange:v=>setComplaint({...complaint,due_at:v})})),
+    h('button',{className:'primary fit',disabled:busy||!complaint.franchise_id||!complaint.subject,onClick:createComplaint},busy?'Creating…':'Create customer care case')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Complaint & customer care queue',tag:'60-DAY + OPEN'}),
+    h(DataTable,{rows:data.complaints||[],cols:[['care_status','SLA'],['ticket_no','Ticket'],['outlet','Outlet'],['subject','Subject'],['priority','Priority'],['status','Status'],['assigned_to','Assigned'],['opened_at','Opened'],['due_at','Due'],['escalation_level','Escalation']],empty:'No customer complaints in the queue.'})
+   )
+  );
+ }else{
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Training Compliance',tag:'STAFF COVERAGE'}),
+    h(DataTable,{rows:data.training||[],cols:[['outlet_code','Code'],['outlet','Outlet'],['staff_count','Active staff'],['training_records','Records'],['completed_records','Valid complete'],['attention_records','Expired'],['expiring_30d','Expiring 30d'],['compliance_percent','Coverage',v=>Number(v||0).toFixed(1)+'%']],empty:'No outlet training summary.'})
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Training attention queue',tag:'RENEW / COMPLETE'}),
+    h(DataTable,{rows:data.training_attention||[],cols:[['attention_state','State'],['outlet','Outlet'],['course_title','Course'],['status','Status'],['scheduled_at','Scheduled'],['completed_at','Completed'],['expires_at','Expiry'],['trainer','Trainer'],['certificate_ref','Certificate']],empty:'No training items need attention.'})
+   )
+  );
+ }
+ return h(React.Fragment,null,msg?h('div',{className:'notice'},h('b',null,'Operations V2 Round 2'),h('span',null,msg)):null,body);
+}
+
 function OperationsRound1View({mode,data,onRefresh,user}){
  const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
  const outlets=data.outlets||[],assignees=data.assignees||[];
@@ -652,24 +748,25 @@ function OperationsRound1View({mode,data,onRefresh,user}){
 }
 
 function OperationsWorkspace({user}){
- const[data,setData]=React.useState(null),[round1,setRound1]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[alerts,setAlerts]=React.useState(null),[perf,setPerf]=React.useState(null),[perfHistory,setPerfHistory]=React.useState([]),[report,setReport]=React.useState(null),[security,setSecurity]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('commandv2'),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7));
+ const[data,setData]=React.useState(null),[round1,setRound1]=React.useState(null),[round2,setRound2]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[alerts,setAlerts]=React.useState(null),[perf,setPerf]=React.useState(null),[perfHistory,setPerfHistory]=React.useState([]),[report,setReport]=React.useState(null),[security,setSecurity]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('commandv2'),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7));
  async function load(){
   try{
    await api('operations.alerts.refresh',{method:'POST',body:{}});
-   const[a,b,c,d,e,f,g,h,i]=await Promise.all([
+   const[a,b,c,d,e,f,g,h,i,j]=await Promise.all([
     api('operations.dashboard'),api('franchise.territory'),api('operations.workboard'),api('operations.intelligence'),
-    api('operations.alerts'),api('operations.performance.preview?period='+encodeURIComponent(period)),api('operations.performance.history'),api('operations.network.report?period='+encodeURIComponent(period)),api('operations.round1')
+    api('operations.alerts'),api('operations.performance.preview?period='+encodeURIComponent(period)),api('operations.performance.history'),api('operations.network.report?period='+encodeURIComponent(period)),api('operations.round1'),api('operations.round2')
    ]);
-   setData(a);setTerritory(b);setWork(c);setIntel(d);setAlerts(e);setPerf(f.preview||null);setPerfHistory(g.records||[]);setReport(h);setRound1(i);
+   setData(a);setTerritory(b);setWork(c);setIntel(d);setAlerts(e);setPerf(f.preview||null);setPerfHistory(g.records||[]);setReport(h);setRound1(i);setRound2(j);
    if(['OWNER','OPERATIONS'].includes(user.role)){try{setSecurity(await api('operations.security.audit'))}catch{}}
   }catch(e){setMsg('Operations data could not be loaded: '+(e.code||'ERROR'))}
  }
  React.useEffect(()=>{load()},[period]);
- if(!data||!round1||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
+ if(!data||!round1||!round2||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const tabs=[['commandv2','Regional Command'],['dailycheckin','Daily Check-in'],['visitplanner','Visit Planner'],['renewals','Renewals'],['launchwar','Launch War Room'],['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
+ const tabs=[['commandv2','Regional Command'],['dailycheckin','Daily Check-in'],['visitplanner','Visit Planner'],['renewals','Renewals'],['launchwar','Launch War Room'],['automationv2','Auto Tasks'],['targetsv2','Target Breakdown'],['reorderv2','Reorder Center'],['settlementfollowup','Settlement Follow-up'],['riskcenter','Risk Center'],['customercare','Customer Care'],['trainingcompliance','Training Compliance'],['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
  let body=null;
  if(['commandv2','dailycheckin','visitplanner','renewals','launchwar'].includes(tab))body=h(OperationsRound1View,{mode:tab,data:round1,onRefresh:load,user});
+ else if(['automationv2','targetsv2','reorderv2','settlementfollowup','riskcenter','customercare','trainingcompliance'].includes(tab))body=h(OperationsRound2View,{mode:tab,data:round2,onRefresh:load,user});
  else if(tab==='network'){
   body=h(React.Fragment,null,
    h('div',{className:'stats'},
@@ -686,7 +783,7 @@ function OperationsWorkspace({user}){
  else if(['alerts','performance','reports','security'].includes(tab))body=h(OperationsPatch4View,{mode:tab,alerts,perf,perfHistory,report,security,period,setPeriod,onRefresh:load,user});
  else body=h(OperationsPatch2View,{mode:tab,work,onRefresh:load,user});
  return h(React.Fragment,null,
-  h('section',{className:'moduleHead'},h('small',null,'OPERATIONS COMMAND CENTER V2 · ROUND 1'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Regional command, daily outlet check-in, field visit planning, renewal alerts and launch readiness—on top of the existing Operations intelligence and control gates.')),
+  h('section',{className:'moduleHead'},h('small',null,'OPERATIONS COMMAND CENTER V2 · ROUND 2'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Regional execution plus automated tasks, target pacing, reorder intelligence, settlement follow-up, risk control, customer care and training compliance.')),
   msg?h('div',{className:'authError'},msg):null,
   h('div',{className:'opsTabs'},tabs.map(([k,l])=>h('button',{key:k,className:tab===k?'active':'',onClick:()=>setTab(k)},l))),
   body
