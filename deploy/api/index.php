@@ -114,7 +114,7 @@ function ops_alert_upsert(PDO $pdo,string $key,?int $fid,string $type,string $se
    VALUES(?,?,?,?,?,?,'open',?,?,?,NOW(),NOW())
    ON DUPLICATE KEY UPDATE franchise_id=VALUES(franchise_id),alert_type=VALUES(alert_type),severity=VALUES(severity),title=VALUES(title),message=VALUES(message),
    source_type=VALUES(source_type),source_id=VALUES(source_id),assigned_user_id=COALESCE(VALUES(assigned_user_id),assigned_user_id),last_seen_at=NOW(),
-   status=IF(status='resolved','open',status),resolved_at=IF(status='resolved',NULL,resolved_at)");
+   resolved_at=IF(status='resolved',NULL,resolved_at),status=IF(status='resolved','open',status)");
  $q->execute([$key,$fid,$type,$severity,$title,$message,$sourceType,$sourceId,$assignee]);
  if(!$before || $before['status']==='resolved'){
   $sev=$severity==='critical'?'critical':'warning';
@@ -627,7 +627,7 @@ if($route==='operations.performance.paid' && $method==='POST'){
 }
 
 if($route==='operations.performance.history'){
- outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $u=auth();if(!in_array($u['role'],['OWNER','OPERATIONS','REGIONAL','FINANCE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $rows=$pdo->query("SELECT pr.id,pr.period_start,pr.period_end,pr.sales_growth_score,pr.stock_rotation_score,pr.outlet_health_score,pr.settlement_score,pr.retention_score,pr.compliance_score,pr.total_score,pr.distributable_profit,pr.performance_share_percent,pr.performance_share_amount,pr.status,u.name user_name,a.name approved_by_name,pr.created_at
    FROM performance_records pr LEFT JOIN users u ON u.id=pr.user_id LEFT JOIN users a ON a.id=pr.approved_by WHERE pr.role_code='OPERATIONS' ORDER BY pr.period_end DESC,pr.id DESC LIMIT 60")->fetchAll();
  out(['ok'=>true,'records'=>$rows]);
