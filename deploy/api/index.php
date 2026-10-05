@@ -89,6 +89,25 @@ function outlet_exists(PDO $pdo,int $fid): array {
  return $row;
 }
 
+function ops_sla_due(string $priority,?string $requested=null): string {
+ if($requested){
+  $ts=strtotime($requested);if($ts!==false)return date('Y-m-d H:i:s',$ts);
+ }
+ $hours=['critical'=>4,'high'=>12,'medium'=>48,'low'=>96][$priority]??48;
+ return date('Y-m-d H:i:s',time()+($hours*3600));
+}
+function ops_assignee(PDO $pdo,$id): ?int {
+ if($id===null||$id===''||(int)$id<=0)return null;
+ $uid=(int)$id;
+ $q=$pdo->prepare("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=? AND u.active=1 AND r.code IN('OWNER','OPERATIONS','REGIONAL') LIMIT 1");
+ $q->execute([$uid]);
+ if(!$q->fetchColumn())out(['ok'=>false,'code'=>'INVALID_OPERATIONS_ASSIGNEE'],422);
+ return $uid;
+}
+function ops_priority(string $priority): string {
+ return in_array($priority,['low','medium','high','critical'],true)?$priority:'medium';
+}
+
 if($route==='health') out(['ok'=>true,'service'=>'Tea Shop BD Business OS API','database'=>'connected']);
 
 if($route==='bootstrap.users' && $method==='POST'){
@@ -390,9 +409,220 @@ if($route==='inventory.transfer.create' && $method==='POST'){
 }
 
 
+
+if($route==='operations.workboard'){
+ $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+
+ $tasks=$pdo->query("SELECT t.id,t.franchise_id,f.code outlet_code,f.name outlet,t.task_type,t.title,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,t.due_at,t.completed_at,t.escalation_level,t.escalated_at,t.created_at,
+   CASE WHEN t.status NOT IN('done','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue'
+        WHEN t.status NOT IN('done','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon'
+        ELSE 'on_time' END sla_status
+   FROM operations_tasks t
+   LEFT JOIN franchises f ON f.id=t.franchise_id
+   LEFT JOIN users u ON u.id=t.assigned_user_id
+   ORDER BY (t.status NOT IN('done','cancelled')) DESC,(t.due_at IS NULL),t.due_at,t.id DESC LIMIT 300")->fetchAll();
+
+ $visits=$pdo->query("SELECT v.id,v.franchise_id,f.code outlet_code,f.name outlet,v.visit_type,v.status,v.scheduled_at,v.visited_at,v.visitor_user_id,u.name visitor,
+   v.cleanliness_score,v.branding_score,v.product_display_score,v.pricing_compliance_score,v.pos_usage_score,v.stock_handling_score,v.overall_score,v.findings,v.corrective_action,v.evidence_ref,v.next_visit_at,v.created_at
+   FROM field_visits v JOIN franchises f ON f.id=v.franchise_id LEFT JOIN users u ON u.id=v.visitor_user_id
+   ORDER BY (v.status='scheduled') DESC,v.scheduled_at DESC,v.id DESC LIMIT 200")->fetchAll();
+
+ $tickets=$pdo->query("SELECT t.id,t.ticket_no,t.franchise_id,f.code outlet_code,f.name outlet,t.category,t.subject,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,
+   t.opened_at,t.due_at,t.first_response_at,t.resolved_at,t.resolution,t.escalation_level,t.escalated_at,(SELECT stu.note FROM support_ticket_updates stu WHERE stu.support_ticket_id=t.id ORDER BY stu.id DESC LIMIT 1) last_update,
+   CASE WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue'
+        WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon'
+        ELSE 'on_time' END sla_status
+   FROM support_tickets t JOIN franchises f ON f.id=t.franchise_id LEFT JOIN users u ON u.id=t.assigned_user_id
+   ORDER BY (t.status NOT IN('resolved','closed','cancelled')) DESC,t.due_at,t.id DESC LIMIT 300")->fetchAll();
+
+ $communications=$pdo->query("SELECT c.id,c.franchise_id,f.code outlet_code,f.name outlet,c.channel,c.direction,c.subject,c.note,c.promised_date,c.follow_up_at,u.name created_by_name,c.created_at
+   FROM outlet_communications c JOIN franchises f ON f.id=c.franchise_id LEFT JOIN users u ON u.id=c.created_by
+   ORDER BY c.created_at DESC,c.id DESC LIMIT 200")->fetchAll();
+
+ $compliance=$pdo->query("SELECT c.id,c.franchise_id,f.code outlet_code,f.name outlet,c.field_visit_id,c.branding_score,c.pricing_score,c.pos_usage_score,c.stock_handling_score,c.customer_service_score,
+   c.overall_score,c.status,c.findings,c.corrective_action,c.corrective_due_at,c.resolved_at,u.name checked_by_name,c.checked_at
+   FROM outlet_compliance_checks c JOIN franchises f ON f.id=c.franchise_id LEFT JOIN users u ON u.id=c.checked_by
+   ORDER BY c.checked_at DESC,c.id DESC LIMIT 200")->fetchAll();
+
+ $training=$pdo->query("SELECT tr.id,tr.franchise_id,f.code outlet_code,f.name outlet,tr.course_title,tr.status,tr.scheduled_at,tr.completed_at,tr.expires_at,tr.trainer
+   FROM outlet_training_records tr JOIN franchises f ON f.id=tr.franchise_id
+   WHERE tr.status IN('pending','scheduled','expired') OR (tr.expires_at IS NOT NULL AND tr.expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))
+   ORDER BY FIELD(tr.status,'expired','pending','scheduled'),tr.expires_at,tr.scheduled_at LIMIT 200")->fetchAll();
+
+ $marketing=$pdo->query("SELECT m.id,m.franchise_id,f.code outlet_code,f.name outlet,m.campaign_code,m.campaign_name,m.status,m.priority,m.assigned_user_id,u.name assigned_to,m.due_at,m.escalation_level,m.escalated_at,m.start_date,m.end_date,m.assets_ready,m.execution_verified,m.sales_before,m.sales_during,m.notes,m.updated_at,
+   CASE WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<NOW() THEN 'overdue'
+        WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon'
+        ELSE 'on_time' END sla_status
+   FROM marketing_executions m JOIN franchises f ON f.id=m.franchise_id LEFT JOIN users u ON u.id=m.assigned_user_id
+   ORDER BY FIELD(m.status,'live','ready','planned','completed','not_participating'),m.due_at,m.id DESC LIMIT 200")->fetchAll();
+
+ $outlets=$pdo->query("SELECT id,code,name,district,upazila,status FROM franchises WHERE status<>'closed' ORDER BY name")->fetchAll();
+ $assignees=$pdo->query("SELECT u.id,u.name,u.email,r.code role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code IN('OWNER','OPERATIONS','REGIONAL') ORDER BY FIELD(r.code,'OPERATIONS','REGIONAL','OWNER'),u.name")->fetchAll();
+
+ $taskOpen=count(array_filter($tasks,fn($r)=>!in_array($r['status'],['done','cancelled'],true)));
+ $taskOver=count(array_filter($tasks,fn($r)=>$r['sla_status']==='overdue'));
+ $ticketOpen=count(array_filter($tickets,fn($r)=>!in_array($r['status'],['resolved','closed','cancelled'],true)));
+ $ticketOver=count(array_filter($tickets,fn($r)=>$r['sla_status']==='overdue'));
+ $visitsDue=count(array_filter($visits,fn($r)=>$r['status']==='scheduled' && !empty($r['scheduled_at']) && strtotime($r['scheduled_at'])<=strtotime('+7 days')));
+ $complianceOpen=count(array_filter($compliance,fn($r)=>in_array($r['status'],['watch','non_compliant'],true) && empty($r['resolved_at'])));
+
+ out(['ok'=>true,
+  'metrics'=>['open_tasks'=>$taskOpen,'overdue_tasks'=>$taskOver,'open_tickets'=>$ticketOpen,'overdue_tickets'=>$ticketOver,'visits_next_7d'=>$visitsDue,'open_compliance'=>$complianceOpen,'training_attention'=>count($training),'active_marketing'=>count(array_filter($marketing,fn($r)=>in_array($r['status'],['planned','ready','live'],true)))],
+  'tasks'=>$tasks,'visits'=>$visits,'tickets'=>$tickets,'communications'=>$communications,'compliance'=>$compliance,'training_attention'=>$training,'marketing'=>$marketing,'outlets'=>$outlets,'assignees'=>$assignees
+ ]);
+}
+
+if($route==='operations.task.create' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $fid=(int)($body['franchise_id']??0);if($fid>0)outlet_exists($pdo,$fid);
+ $title=trim((string)($body['title']??''));if($title==='')out(['ok'=>false,'code'=>'INVALID_TASK'],422);
+ $priority=ops_priority((string)($body['priority']??'medium'));$assignee=ops_assignee($pdo,$body['assigned_user_id']??null);
+ $due=ops_sla_due($priority,($body['due_at']??null)?:null);
+ $q=$pdo->prepare("INSERT INTO operations_tasks(franchise_id,task_type,title,detail,priority,status,assigned_user_id,due_at,source_type,source_id,created_by) VALUES(?,?,?,?,?,'open',?,?,?,?,?)");
+ $q->execute([$fid?:null,$body['task_type']??'follow_up',$title,$body['detail']??null,$priority,$assignee,$due,$body['source_type']??null,($body['source_id']??null)?:null,(int)$u['id']]);
+ $id=(int)$pdo->lastInsertId();
+ if($fid>0)outlet_timeline($pdo,$fid,(int)$u['id'],'task','Task created',$title,'operations_task',$id,['priority'=>$priority,'due_at'=>$due]);
+ audit($pdo,(int)$u['id'],'create','operations_task',(string)$id,['franchise_id'=>$fid?:null,'title'=>$title,'priority'=>$priority,'due_at'=>$due,'assigned_user_id'=>$assignee]);
+ out(['ok'=>true,'id'=>$id,'due_at'=>$due],201);
+}
+
+if($route==='operations.task.update' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$id=(int)($body['id']??0);
+ $q=$pdo->prepare("SELECT * FROM operations_tasks WHERE id=?");$q->execute([$id]);$before=$q->fetch();if(!$before)out(['ok'=>false,'code'=>'TASK_NOT_FOUND'],404);
+ $status=(string)($body['status']??$before['status']);if(!in_array($status,['open','in_progress','waiting','done','cancelled'],true))out(['ok'=>false,'code'=>'INVALID_TASK_STATUS'],422);
+ $priority=ops_priority((string)($body['priority']??$before['priority']));
+ $assignee=array_key_exists('assigned_user_id',$body)?ops_assignee($pdo,$body['assigned_user_id']):(($before['assigned_user_id']??null)?(int)$before['assigned_user_id']:null);
+ $escalate=!empty($body['escalate']);$level=(int)$before['escalation_level']+($escalate?1:0);
+ $due=array_key_exists('due_at',$body)?ops_sla_due($priority,$body['due_at']?:null):$before['due_at'];
+ $q=$pdo->prepare("UPDATE operations_tasks SET status=?,priority=?,assigned_user_id=?,due_at=?,detail=?,completed_at=IF(?='done',COALESCE(completed_at,NOW()),NULL),escalation_level=?,escalated_at=IF(?,NOW(),escalated_at) WHERE id=?");
+ $q->execute([$status,$priority,$assignee,$due,$body['detail']??$before['detail'],$status,$level,$escalate?1:0,$id]);
+ if(!empty($before['franchise_id']))outlet_timeline($pdo,(int)$before['franchise_id'],(int)$u['id'],'task','Task '.$status,$before['title'],'operations_task',$id,['priority'=>$priority,'escalation_level'=>$level]);
+ audit($pdo,(int)$u['id'],'update','operations_task',(string)$id,['status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'due_at'=>$due,'escalation_level'=>$level]);
+ out(['ok'=>true,'id'=>$id,'status'=>$status,'escalation_level'=>$level]);
+}
+
+if($route==='operations.visit.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $id=(int)($body['id']??0);$status=(string)($body['status']??'scheduled');if(!in_array($status,['scheduled','completed','cancelled','follow_up'],true))out(['ok'=>false,'code'=>'INVALID_VISIT_STATUS'],422);
+ $visitor=ops_assignee($pdo,$body['visitor_user_id']??($u['id']??null));
+ $scores=[];foreach(['cleanliness_score','branding_score','product_display_score','pricing_compliance_score','pos_usage_score','stock_handling_score'] as $k){$v=$body[$k]??null;$scores[$k]=$v===''||$v===null?null:max(0,min(100,(float)$v));}
+ $vals=array_values(array_filter($scores,fn($v)=>$v!==null));$overall=$vals?round(array_sum($vals)/count($vals),2):null;
+ if($id>0){
+  $q=$pdo->prepare("UPDATE field_visits SET visit_type=?,status=?,scheduled_at=?,visited_at=?,visitor_user_id=?,cleanliness_score=?,branding_score=?,product_display_score=?,pricing_compliance_score=?,pos_usage_score=?,stock_handling_score=?,overall_score=?,findings=?,corrective_action=?,evidence_ref=?,next_visit_at=? WHERE id=? AND franchise_id=?");
+  $q->execute([$body['visit_type']??'routine',$status,($body['scheduled_at']??null)?:null,$status==='completed'?(($body['visited_at']??null)?:date('Y-m-d H:i:s')):(($body['visited_at']??null)?:null),$visitor,$scores['cleanliness_score'],$scores['branding_score'],$scores['product_display_score'],$scores['pricing_compliance_score'],$scores['pos_usage_score'],$scores['stock_handling_score'],$overall,$body['findings']??null,$body['corrective_action']??null,$body['evidence_ref']??null,($body['next_visit_at']??null)?:null,$id,$fid]);
+ }else{
+  $q=$pdo->prepare("INSERT INTO field_visits(franchise_id,visit_type,status,scheduled_at,visited_at,visitor_user_id,cleanliness_score,branding_score,product_display_score,pricing_compliance_score,pos_usage_score,stock_handling_score,overall_score,findings,corrective_action,evidence_ref,next_visit_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  $q->execute([$fid,$body['visit_type']??'routine',$status,($body['scheduled_at']??null)?:null,$status==='completed'?(($body['visited_at']??null)?:date('Y-m-d H:i:s')):(($body['visited_at']??null)?:null),$visitor,$scores['cleanliness_score'],$scores['branding_score'],$scores['product_display_score'],$scores['pricing_compliance_score'],$scores['pos_usage_score'],$scores['stock_handling_score'],$overall,$body['findings']??null,$body['corrective_action']??null,$body['evidence_ref']??null,($body['next_visit_at']??null)?:null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'field_visit','Field visit '.$status,$body['findings']??($body['visit_type']??'routine'),'field_visit',$id,['overall_score'=>$overall,'next_visit_at'=>$body['next_visit_at']??null]);
+ audit($pdo,(int)$u['id'],'visit_save','franchise',(string)$fid,['visit_id'=>$id,'status'=>$status,'overall_score'=>$overall]);
+ out(['ok'=>true,'id'=>$id,'overall_score'=>$overall]);
+}
+
+if($route==='operations.ticket.create' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $subject=trim((string)($body['subject']??''));if($subject==='')out(['ok'=>false,'code'=>'INVALID_TICKET'],422);
+ $category=(string)($body['category']??'other');if(!in_array($category,['stock','pos','delivery','customer','branding','payment','staff_training','other'],true))$category='other';
+ $priority=ops_priority((string)($body['priority']??'medium'));$assignee=ops_assignee($pdo,$body['assigned_user_id']??null);$due=ops_sla_due($priority,($body['due_at']??null)?:null);
+ $ticketNo='TSB-TKT-'.date('ymdHis').'-'.random_int(100,999);
+ $q=$pdo->prepare("INSERT INTO support_tickets(ticket_no,franchise_id,category,subject,detail,priority,status,assigned_user_id,due_at,created_by) VALUES(?,?,?,?,?,?,'open',?,?,?)");
+ $q->execute([$ticketNo,$fid,$category,$subject,$body['detail']??null,$priority,$assignee,$due,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ $q=$pdo->prepare("INSERT INTO support_ticket_updates(support_ticket_id,update_type,note,new_status,created_by) VALUES(?,'status',?,'open',?)");$q->execute([$id,'Ticket opened',(int)$u['id']]);
+ outlet_timeline($pdo,$fid,(int)$u['id'],'support_ticket','Support ticket opened',$ticketNo.' · '.$subject,'support_ticket',$id,['priority'=>$priority,'due_at'=>$due]);
+ audit($pdo,(int)$u['id'],'create','support_ticket',(string)$id,['ticket_no'=>$ticketNo,'franchise_id'=>$fid,'category'=>$category,'priority'=>$priority,'due_at'=>$due]);
+ out(['ok'=>true,'id'=>$id,'ticket_no'=>$ticketNo,'due_at'=>$due],201);
+}
+
+if($route==='operations.ticket.update' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$id=(int)($body['id']??0);
+ $q=$pdo->prepare("SELECT * FROM support_tickets WHERE id=?");$q->execute([$id]);$before=$q->fetch();if(!$before)out(['ok'=>false,'code'=>'TICKET_NOT_FOUND'],404);
+ $status=(string)($body['status']??$before['status']);if(!in_array($status,['open','assigned','in_progress','waiting','resolved','closed','cancelled'],true))out(['ok'=>false,'code'=>'INVALID_TICKET_STATUS'],422);
+ $priority=ops_priority((string)($body['priority']??$before['priority']));$assignee=array_key_exists('assigned_user_id',$body)?ops_assignee($pdo,$body['assigned_user_id']):(($before['assigned_user_id']??null)?(int)$before['assigned_user_id']:null);
+ $escalate=!empty($body['escalate']);$level=(int)$before['escalation_level']+($escalate?1:0);$resolution=$body['resolution']??$before['resolution'];
+ $due=array_key_exists('due_at',$body)?ops_sla_due($priority,($body['due_at']??null)?:null):$before['due_at'];
+ $firstResponse=in_array($status,['assigned','in_progress','waiting','resolved','closed'],true)?'COALESCE(first_response_at,NOW())':'first_response_at';
+ $resolved=in_array($status,['resolved','closed'],true)?'COALESCE(resolved_at,NOW())':($status==='open'?'NULL':'resolved_at');
+ $q=$pdo->prepare("UPDATE support_tickets SET status=?,priority=?,assigned_user_id=?,due_at=?,resolution=?,first_response_at={$firstResponse},resolved_at={$resolved},escalation_level=?,escalated_at=IF(?,NOW(),escalated_at) WHERE id=?");
+ $q->execute([$status,$priority,$assignee,$due,$resolution,$level,$escalate?1:0,$id]);
+ $type=$escalate?'escalation':(in_array($status,['resolved','closed'],true)?'resolution':'status');
+ $q=$pdo->prepare("INSERT INTO support_ticket_updates(support_ticket_id,update_type,note,old_status,new_status,created_by) VALUES(?,?,?,?,?,?)");
+ $q->execute([$id,$type,$body['note']??($escalate?'Escalated':'Status updated'),$before['status'],$status,(int)$u['id']]);
+ outlet_timeline($pdo,(int)$before['franchise_id'],(int)$u['id'],'support_ticket','Ticket '.$status,$before['ticket_no'].' · '.$before['subject'],'support_ticket',$id,['escalation_level'=>$level]);
+ audit($pdo,(int)$u['id'],'update','support_ticket',(string)$id,['status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'due_at'=>$due,'escalation_level'=>$level]);
+ out(['ok'=>true,'id'=>$id,'status'=>$status,'escalation_level'=>$level]);
+}
+
+if($route==='operations.communication.create' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $note=trim((string)($body['note']??''));if($note==='')out(['ok'=>false,'code'=>'INVALID_COMMUNICATION'],422);
+ $channel=(string)($body['channel']??'call');if(!in_array($channel,['call','whatsapp','email','meeting','visit','internal_note','other'],true))$channel='other';
+ $direction=(string)($body['direction']??'outbound');if(!in_array($direction,['inbound','outbound','internal'],true))$direction='outbound';
+ $q=$pdo->prepare("INSERT INTO outlet_communications(franchise_id,channel,direction,subject,note,promised_date,follow_up_at,created_by) VALUES(?,?,?,?,?,?,?,?)");
+ $q->execute([$fid,$channel,$direction,$body['subject']??null,$note,($body['promised_date']??null)?:null,($body['follow_up_at']??null)?:null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ if(!empty($body['follow_up_at'])){
+  $title='Follow up: '.(($body['subject']??'')?:ucfirst($channel));
+  $due=ops_sla_due('medium',$body['follow_up_at']);
+  $q=$pdo->prepare("INSERT INTO operations_tasks(franchise_id,task_type,title,detail,priority,status,assigned_user_id,due_at,source_type,source_id,created_by) VALUES(?,'communication_follow_up',?,?, 'medium','open',?,?, 'outlet_communication',?,?)");
+  $q->execute([$fid,$title,$note,(int)$u['id'],$due,$id,(int)$u['id']]);
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'communication','Communication · '.$channel,$body['subject']??$note,'outlet_communication',$id,['follow_up_at'=>$body['follow_up_at']??null]);
+ audit($pdo,(int)$u['id'],'create','outlet_communication',(string)$id,['franchise_id'=>$fid,'channel'=>$channel,'direction'=>$direction]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='operations.compliance.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $scores=[];foreach(['branding_score','pricing_score','pos_usage_score','stock_handling_score','customer_service_score'] as $k)$scores[$k]=max(0,min(100,(float)($body[$k]??0)));
+ $overall=round(array_sum($scores)/count($scores),2);$status=$overall>=80?'compliant':($overall>=60?'watch':'non_compliant');$due=($body['corrective_due_at']??null)?:null;
+ $q=$pdo->prepare("INSERT INTO outlet_compliance_checks(franchise_id,field_visit_id,branding_score,pricing_score,pos_usage_score,stock_handling_score,customer_service_score,overall_score,status,findings,corrective_action,corrective_due_at,checked_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+ $q->execute([$fid,($body['field_visit_id']??null)?:null,$scores['branding_score'],$scores['pricing_score'],$scores['pos_usage_score'],$scores['stock_handling_score'],$scores['customer_service_score'],$overall,$status,$body['findings']??null,$body['corrective_action']??null,$due,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ if($status!=='compliant' && trim((string)($body['corrective_action']??''))!==''){
+  $priority=$status==='non_compliant'?'high':'medium';$taskDue=ops_sla_due($priority,$due);
+  $q=$pdo->prepare("INSERT INTO operations_tasks(franchise_id,task_type,title,detail,priority,status,assigned_user_id,due_at,source_type,source_id,created_by) VALUES(?,'compliance','Compliance corrective action',?,?, 'open',?,?, 'compliance_check',?,?)");
+  $q->execute([$fid,$body['corrective_action'],$priority,(int)$u['id'],$taskDue,$id,(int)$u['id']]);
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'compliance','Compliance · '.$status,'Score '.$overall,'compliance_check',$id,['overall_score'=>$overall,'corrective_due_at'=>$due]);
+ audit($pdo,(int)$u['id'],'compliance_check','franchise',(string)$fid,['check_id'=>$id,'overall_score'=>$overall,'status'=>$status]);
+ out(['ok'=>true,'id'=>$id,'overall_score'=>$overall,'status'=>$status],201);
+}
+
+
+
+if($route==='operations.compliance.resolve' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$id=(int)($body['id']??0);
+ $q=$pdo->prepare("SELECT id,franchise_id,status,corrective_action FROM outlet_compliance_checks WHERE id=?");$q->execute([$id]);$row=$q->fetch();if(!$row)out(['ok'=>false,'code'=>'COMPLIANCE_NOT_FOUND'],404);
+ $q=$pdo->prepare("UPDATE outlet_compliance_checks SET resolved_at=COALESCE(resolved_at,NOW()) WHERE id=?");$q->execute([$id]);
+ outlet_timeline($pdo,(int)$row['franchise_id'],(int)$u['id'],'compliance','Compliance corrective action resolved',$row['corrective_action']?:'Compliance issue resolved','compliance_check',$id);
+ audit($pdo,(int)$u['id'],'resolve','compliance_check',(string)$id,['franchise_id'=>(int)$row['franchise_id']]);
+ out(['ok'=>true,'id'=>$id]);
+}
+
+if($route==='operations.marketing.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $name=trim((string)($body['campaign_name']??''));if($name==='')out(['ok'=>false,'code'=>'INVALID_CAMPAIGN'],422);
+ $status=(string)($body['status']??'planned');if(!in_array($status,['planned','ready','live','completed','not_participating'],true))out(['ok'=>false,'code'=>'INVALID_CAMPAIGN_STATUS'],422);
+ $priority=ops_priority((string)($body['priority']??'medium'));$assignee=ops_assignee($pdo,$body['assigned_user_id']??($u['id']??null));$due=ops_sla_due($priority,($body['due_at']??null)?:null);
+ $id=(int)($body['id']??0);$escalate=!empty($body['escalate']);
+ if($id>0){
+  $q=$pdo->prepare("SELECT escalation_level FROM marketing_executions WHERE id=? AND franchise_id=?");$q->execute([$id,$fid]);$old=$q->fetch();if(!$old)out(['ok'=>false,'code'=>'CAMPAIGN_NOT_FOUND'],404);
+  $level=(int)$old['escalation_level']+($escalate?1:0);
+  $q=$pdo->prepare("UPDATE marketing_executions SET campaign_code=?,campaign_name=?,status=?,priority=?,assigned_user_id=?,due_at=?,escalation_level=?,escalated_at=IF(?,NOW(),escalated_at),start_date=?,end_date=?,assets_ready=?,execution_verified=?,sales_before=?,sales_during=?,notes=? WHERE id=? AND franchise_id=?");
+  $q->execute([$body['campaign_code']??null,$name,$status,$priority,$assignee,$due,$level,$escalate?1:0,($body['start_date']??null)?:null,($body['end_date']??null)?:null,!empty($body['assets_ready'])?1:0,!empty($body['execution_verified'])?1:0,(float)($body['sales_before']??0),(float)($body['sales_during']??0),$body['notes']??null,$id,$fid]);
+ }else{
+  $level=$escalate?1:0;
+  $q=$pdo->prepare("INSERT INTO marketing_executions(franchise_id,campaign_code,campaign_name,status,priority,assigned_user_id,due_at,escalation_level,escalated_at,start_date,end_date,assets_ready,execution_verified,sales_before,sales_during,notes,created_by) VALUES(?,?,?,?,?,?,?,?,IF(?,NOW(),NULL),?,?,?,?,?,?,?,?)");
+  $q->execute([$fid,$body['campaign_code']??null,$name,$status,$priority,$assignee,$due,$level,$escalate?1:0,($body['start_date']??null)?:null,($body['end_date']??null)?:null,!empty($body['assets_ready'])?1:0,!empty($body['execution_verified'])?1:0,(float)($body['sales_before']??0),(float)($body['sales_during']??0),$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'marketing','Marketing · '.$status,$name,'marketing_execution',$id,['priority'=>$priority,'due_at'=>$due,'escalation_level'=>$level,'assets_ready'=>!empty($body['assets_ready']),'execution_verified'=>!empty($body['execution_verified'])]);
+ audit($pdo,(int)$u['id'],'marketing_save','franchise',(string)$fid,['marketing_id'=>$id,'campaign_name'=>$name,'status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'due_at'=>$due,'escalation_level'=>$level]);
+ out(['ok'=>true,'id'=>$id,'escalation_level'=>$level]);
+}
+
 if($route==='operations.dashboard'){
  $u=auth();
- if(!in_array($u['role'],['OWNER','OPERATIONS'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','OPERATIONS','REGIONAL'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
 
  $today=date('Y-m-d');
  $monthStart=date('Y-m-01');
@@ -462,6 +692,16 @@ if($route==='operations.dashboard'){
    WHERE pr.role_code='OPERATIONS'
    ORDER BY pr.period_end DESC,pr.id DESC LIMIT 1")->fetch() ?: null;
 
+ $work=$pdo->query("SELECT
+   (SELECT COUNT(*) FROM operations_tasks WHERE status NOT IN('done','cancelled')) open_tasks,
+   (SELECT COUNT(*) FROM operations_tasks WHERE status NOT IN('done','cancelled') AND due_at IS NOT NULL AND due_at<NOW()) overdue_tasks,
+   (SELECT COUNT(*) FROM support_tickets WHERE status NOT IN('resolved','closed','cancelled')) open_tickets,
+   (SELECT COUNT(*) FROM support_tickets WHERE status NOT IN('resolved','closed','cancelled') AND due_at IS NOT NULL AND due_at<NOW()) overdue_tickets,
+   (SELECT COUNT(*) FROM field_visits WHERE status='scheduled' AND scheduled_at BETWEEN NOW() AND DATE_ADD(NOW(),INTERVAL 7 DAY)) visits_next_7d,
+   (SELECT COUNT(*) FROM outlet_compliance_checks WHERE status IN('watch','non_compliant') AND resolved_at IS NULL) open_compliance,
+   (SELECT COUNT(*) FROM outlet_training_records WHERE status IN('pending','scheduled','expired') OR (expires_at IS NOT NULL AND expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))) training_attention,
+   (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing")->fetch();
+
  $currentSales=(float)($current['sales']??0);
  $previousSales=(float)($previous['sales']??0);
  $growth=$previousSales>0?round((($currentSales-$previousSales)/$previousSales)*100,2):null;
@@ -485,6 +725,16 @@ if($route==='operations.dashboard'){
    'settlement'=>[
      'open_count'=>(int)($unsettled['rows_count']??0),
      'open_amount'=>(float)($unsettled['amount']??0),
+   ],
+   'work'=>[
+     'open_tasks'=>(int)($work['open_tasks']??0),
+     'overdue_tasks'=>(int)($work['overdue_tasks']??0),
+     'open_tickets'=>(int)($work['open_tickets']??0),
+     'overdue_tickets'=>(int)($work['overdue_tickets']??0),
+     'visits_next_7d'=>(int)($work['visits_next_7d']??0),
+     'open_compliance'=>(int)($work['open_compliance']??0),
+     'training_attention'=>(int)($work['training_attention']??0),
+     'active_marketing'=>(int)($work['active_marketing']??0),
    ],
    'outlets'=>$outlets,
    'low_performers'=>$low,
@@ -599,6 +849,20 @@ if($route==='franchise.360'){
 
  $q=$pdo->prepare("SELECT id,period_start,period_end,verified_sales,earned_margin,net_payable,status,locked_at FROM settlements WHERE franchise_id=? ORDER BY period_end DESC,id DESC LIMIT 12");$q->execute([$fid]);$settlements=$q->fetchAll();
 
+ $q=$pdo->prepare("SELECT t.id,t.task_type,t.title,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,t.due_at,t.completed_at,t.escalation_level,t.escalated_at,t.created_at,
+   CASE WHEN t.status NOT IN('done','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue' WHEN t.status NOT IN('done','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon' ELSE 'on_time' END sla_status
+   FROM operations_tasks t LEFT JOIN users u ON u.id=t.assigned_user_id WHERE t.franchise_id=? ORDER BY (t.status NOT IN('done','cancelled')) DESC,t.due_at,t.id DESC LIMIT 100");$q->execute([$fid]);$opsTasks=$q->fetchAll();
+ $q=$pdo->prepare("SELECT v.id,v.visit_type,v.status,v.scheduled_at,v.visited_at,v.visitor_user_id,u.name visitor,v.overall_score,v.findings,v.corrective_action,v.evidence_ref,v.next_visit_at
+   FROM field_visits v LEFT JOIN users u ON u.id=v.visitor_user_id WHERE v.franchise_id=? ORDER BY v.scheduled_at DESC,v.id DESC LIMIT 100");$q->execute([$fid]);$visits=$q->fetchAll();
+ $q=$pdo->prepare("SELECT t.id,t.ticket_no,t.category,t.subject,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,t.opened_at,t.due_at,t.first_response_at,t.resolved_at,t.resolution,t.escalation_level,t.escalated_at,
+   CASE WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue' WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon' ELSE 'on_time' END sla_status
+   FROM support_tickets t LEFT JOIN users u ON u.id=t.assigned_user_id WHERE t.franchise_id=? ORDER BY (t.status NOT IN('resolved','closed','cancelled')) DESC,t.due_at,t.id DESC LIMIT 100");$q->execute([$fid]);$tickets=$q->fetchAll();
+ $q=$pdo->prepare("SELECT c.id,c.channel,c.direction,c.subject,c.note,c.promised_date,c.follow_up_at,u.name created_by_name,c.created_at FROM outlet_communications c LEFT JOIN users u ON u.id=c.created_by WHERE c.franchise_id=? ORDER BY c.created_at DESC,c.id DESC LIMIT 150");$q->execute([$fid]);$communications=$q->fetchAll();
+ $q=$pdo->prepare("SELECT c.id,c.field_visit_id,c.branding_score,c.pricing_score,c.pos_usage_score,c.stock_handling_score,c.customer_service_score,c.overall_score,c.status,c.findings,c.corrective_action,c.corrective_due_at,c.resolved_at,u.name checked_by_name,c.checked_at FROM outlet_compliance_checks c LEFT JOIN users u ON u.id=c.checked_by WHERE c.franchise_id=? ORDER BY c.checked_at DESC,c.id DESC LIMIT 100");$q->execute([$fid]);$compliance=$q->fetchAll();
+ $q=$pdo->prepare("SELECT m.id,m.campaign_code,m.campaign_name,m.status,m.priority,m.assigned_user_id,u.name assigned_to,m.due_at,m.escalation_level,m.escalated_at,m.start_date,m.end_date,m.assets_ready,m.execution_verified,m.sales_before,m.sales_during,m.notes,m.updated_at,
+   CASE WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<NOW() THEN 'overdue' WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon' ELSE 'on_time' END sla_status
+   FROM marketing_executions m LEFT JOIN users u ON u.id=m.assigned_user_id WHERE m.franchise_id=? ORDER BY m.due_at,m.id DESC LIMIT 100");$q->execute([$fid]);$marketing=$q->fetchAll();
+
  $events=[];
  $q=$pdo->prepare("SELECT occurred_at,event_type,title,detail,reference_type,reference_id FROM outlet_timeline WHERE franchise_id=? ORDER BY occurred_at DESC,id DESC LIMIT 150");$q->execute([$fid]);
  foreach($q->fetchAll() as $e)$events[]=$e;
@@ -613,6 +877,7 @@ if($route==='franchise.360'){
  out(['ok'=>true,'franchise'=>$fr,'profile'=>$profile,'pipeline'=>$pipeline,
   'checklists'=>['opening'=>$opening,'closure'=>$closure,'opening_progress'=>count($opening)?round($openingDone/count($opening)*100):0,'closure_progress'=>count($closure)?round($closureDone/count($closure)*100):0],
   'staff'=>$staff,'training'=>$training,'documents'=>$documents,'health_history'=>$health,'health_latest'=>$health[0]??null,
+  'operations'=>['tasks'=>$opsTasks,'visits'=>$visits,'tickets'=>$tickets,'communications'=>$communications,'compliance'=>$compliance,'marketing'=>$marketing],
   'sales'=>$sales,'stock'=>$stock,'stock_value'=>round($stockValue,2),'settlements'=>$settlements,'timeline'=>array_slice($events,0,250)]);
 }
 

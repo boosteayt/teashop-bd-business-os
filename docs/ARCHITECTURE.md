@@ -87,3 +87,47 @@ Opening checklist has 10 required controls. Closure checklist has 8 controls cov
 
 ### Audit
 Profile, pipeline, checklist, staff, training, health and document mutations are recorded through the central audit log. Outlet timeline separately preserves the operational story of the outlet.
+
+
+## Operations Patch 2 — Daily Operations & Support
+
+### Workboard
+The Franchise & Retail Operations workspace now has role-controlled tabs for:
+- Network
+- Daily Tasks
+- Field Visits
+- Support Tickets
+- Compliance & Training
+- Marketing
+- Communications
+
+### SLA
+Operational tasks, support tickets and marketing executions carry priority, assignee and due-time control. If no custom due time is supplied:
+- Critical = 4 hours
+- High = 12 hours
+- Medium = 48 hours
+- Low = 96 hours
+
+Open records are calculated as On Time, Due Soon (within 24 hours), or Overdue. Escalation increments an explicit escalation level and stores the escalation time.
+
+### Field operations
+Field visits store scheduling, responsible visitor, inspection scores, findings, corrective action and next visit. Compliance is tracked independently so a site visit and an SOP check can exist together.
+
+### Communications
+Call / WhatsApp / email / meeting / visit / internal notes are outlet-linked. A communication with a follow-up date automatically creates a daily operations follow-up task.
+
+### Compliance
+Compliance score is the average of:
+- branding
+- pricing
+- POS usage
+- stock handling
+- customer service
+
+80+ = Compliant, 60–79.99 = Watch, below 60 = Non-Compliant. Corrective actions can generate a linked task and have an explicit resolution timestamp.
+
+### Marketing execution
+Marketing policy remains HQ-controlled. Operations tracks outlet execution only: readiness, assigned operator, priority, due date, campaign dates, execution confirmation and sales before/during the campaign.
+
+### Outlet 360 integration
+Patch 2 records are surfaced under Outlet 360° -> Daily Ops, and every major mutation writes both the central audit log and outlet operational timeline.
