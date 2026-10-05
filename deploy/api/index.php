@@ -737,7 +737,9 @@ if($route==='operations.security.audit'){
 
 if($route==='operations.intelligence'){
  $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
- $monthStart=date('Y-m-01');$today=date('Y-m-d');
+ $monthStart=date('Y-m-01');$today=date('Y-m-d');$intelPhase='start';
+ try{
+  $intelPhase='outlets';
 
  $outlets=$pdo->query("SELECT f.id,f.code,f.name,f.district,f.upazila,f.status,f.opened_at,
    COALESCE((SELECT oh.total_score FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),0) health_score,
@@ -747,6 +749,7 @@ if($route==='operations.intelligence'){
    FROM franchises f WHERE f.status<>'closed' ORDER BY f.name")->fetchAll();
  $outletMap=[];foreach($outlets as $o)$outletMap[(int)$o['id']]=$o;
 
+ $intelPhase='sales';
  $salesRows=$pdo->query("SELECT franchise_id,
    SUM(CASE WHEN sold_at>=DATE_SUB(NOW(),INTERVAL 7 DAY) THEN gross_amount ELSE 0 END) sales_7d,
    SUM(CASE WHEN sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) THEN gross_amount ELSE 0 END) sales_30d,
@@ -756,6 +759,7 @@ if($route==='operations.intelligence'){
    FROM pos_sales GROUP BY franchise_id")->fetchAll();
  $salesMap=[];foreach($salesRows as $r)$salesMap[(int)$r['franchise_id']]=$r;
 
+ $intelPhase='pack_sales';
  $packSalesRows=$pdo->query("SELECT ps.franchise_id,psi.product_pack_id,
    SUM(CASE WHEN ps.sold_at>=DATE_SUB(NOW(),INTERVAL 7 DAY) THEN psi.qty ELSE 0 END) qty_7d,
    SUM(CASE WHEN ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) THEN psi.qty ELSE 0 END) qty_30d,
@@ -763,6 +767,7 @@ if($route==='operations.intelligence'){
    FROM pos_sales ps JOIN pos_sale_items psi ON psi.pos_sale_id=ps.id GROUP BY ps.franchise_id,psi.product_pack_id")->fetchAll();
  $packSales=[];foreach($packSalesRows as $r)$packSales[(int)$r['franchise_id'].':'.(int)$r['product_pack_id']]=$r;
 
+ $intelPhase='stock';
  $stockRows=$pdo->query("SELECT il.location_id franchise_id,il.product_pack_id,p.name product,pp.grams,pp.mrp,
    SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty
             WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) stock_qty,
@@ -771,9 +776,11 @@ if($route==='operations.intelligence'){
    WHERE il.location_type='franchise' AND il.location_id IS NOT NULL
    GROUP BY il.location_id,il.product_pack_id,p.name,pp.grams,pp.mrp")->fetchAll();
 
+ $intelPhase='policy';
  $polRows=$pdo->query("SELECT franchise_id,product_pack_id,min_days_cover,target_days_cover,max_days_cover,dead_stock_days FROM outlet_inventory_policies")->fetchAll();
  $pol=[];foreach($polRows as $r)$pol[(int)$r['franchise_id'].':'.(int)$r['product_pack_id']]=$r;
 
+ $intelPhase='stock_counts';
  $countRows=$pdo->query("SELECT sc.* FROM outlet_stock_counts sc
    JOIN (SELECT franchise_id,product_pack_id,MAX(id) max_id FROM outlet_stock_counts GROUP BY franchise_id,product_pack_id) x ON x.max_id=sc.id")->fetchAll();
  $countMap=[];foreach($countRows as $r)$countMap[(int)$r['franchise_id'].':'.(int)$r['product_pack_id']]=$r;
@@ -806,6 +813,7 @@ if($route==='operations.intelligence'){
   ];
  }
 
+ $intelPhase='settlements';
  $settlements=$pdo->query("SELECT s.id,s.franchise_id,f.code outlet_code,f.name outlet,s.period_start,s.period_end,s.verified_sales,s.earned_margin,s.previous_balance,s.net_payable,s.status,
    GREATEST(DATEDIFF(CURDATE(),s.period_end),0) age_days
    FROM settlements s JOIN franchises f ON f.id=s.franchise_id WHERE s.status<>'paid'
@@ -838,9 +846,14 @@ if($route==='operations.intelligence'){
  $liveRank=array_values(array_filter($rank,fn($r)=>in_array($r['status'],['active','watch','critical'],true)));
  $top=array_slice($liveRank,0,10);$bottom=array_slice(array_reverse($liveRank),0,10);
 
+ $intelPhase='response';
  out(['ok'=>true,'period'=>['month_start'=>$monthStart,'today'=>$today],
   'summary'=>['inventory'=>$summary,'no_sale_3d'=>count(array_filter($liveRank,fn($r)=>$r['inactive_days']>=3)),'no_sale_7d'=>count(array_filter($liveRank,fn($r)=>$r['inactive_days']>=7)),'open_settlements'=>count($settlements)],
   'outlets'=>$liveRank,'inventory'=>$inventory,'settlements'=>$settlements,'aging'=>$aging,'top'=>$top,'bottom'=>$bottom]);
+ }catch(Throwable $e){
+  error_log('operations.intelligence failed phase='.$intelPhase.' type='.get_class($e).' code='.$e->getCode());
+  out(['ok'=>false,'code'=>'OPERATIONS_INTELLIGENCE_FAILED','phase'=>$intelPhase],500);
+ }
 }
 
 if($route==='operations.target.save' && $method==='POST'){
