@@ -153,14 +153,14 @@ if($route==='purchase.create' && $method==='POST'){
 
 if($route==='production'){
  $u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PRODUCTION','QC'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $rows=$pdo->query("SELECT pb.id,pb.batch_no,p.name product,pb.input_kg input,pb.output_kg output,pb.wastage_kg waste,pb.qc_status,pb.produced_at FROM production_batches pb JOIN products p ON p.id=pb.product_id ORDER BY pb.id DESC LIMIT 300")->fetchAll();
  out(['ok'=>true,'production'=>$rows]);
 }
 
 if($route==='production.create' && $method==='POST'){
  csrf(); $u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PRODUCTION'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $pid=(int)($body['product_id']??0); $input=(float)($body['input']??0); $output=(float)($body['output']??0); $batch=trim((string)($body['batch_no']??''));
  $qc=(string)($body['qc_status']??'pass');
  if($pid<=0||$input<=0||$output<0||$output>$input||!in_array($qc,['pending','pass','hold','reject'],true)) out(['ok'=>false,'code'=>'INVALID_PRODUCTION'],422);
@@ -189,7 +189,7 @@ if($route==='packaging.materials'){
 
 if($route==='packaging.material.create' && $method==='POST'){
  csrf();$u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PACKAGING'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $name=trim((string)($body['name']??''));$unit=trim((string)($body['unit']??'pcs'));if($name==='')out(['ok'=>false,'code'=>'INVALID_PACKAGING_MATERIAL'],422);
  $code=trim((string)($body['code']??''));if($code==='')$code='PKM-'.date('ymdHis').'-'.random_int(10,99);
  try{
@@ -202,7 +202,7 @@ if($route==='packaging.material.create' && $method==='POST'){
 
 if($route==='packaging.purchase.create' && $method==='POST'){
  csrf();$u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PACKAGING'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $sid=(int)($body['supplier_id']??0);$mid=(int)($body['packaging_material_id']??0);$qty=(float)($body['qty']??0);$rate=(float)($body['rate']??0);$lot=trim((string)($body['batch_no']??''));
  if($sid<=0||$mid<=0||$qty<=0||$rate<0)out(['ok'=>false,'code'=>'INVALID_PACKAGING_PURCHASE'],422);
  $sq=$pdo->prepare("SELECT id,payment_terms_days FROM suppliers WHERE id=? AND supplier_type='packaging' AND active=1");$sq->execute([$sid]);$supplier=$sq->fetch();if(!$supplier)out(['ok'=>false,'code'=>'SUPPLIER_NOT_FOUND'],404);
@@ -238,7 +238,7 @@ if($route==='packaging.bom'){
 
 if($route==='packaging'){
  $u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PACKAGING','PRODUCTION','QC'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $rows=$pdo->query("SELECT pj.id,pj.job_no,p.name product,pp.grams pack,pj.pack_qty qty,(pp.grams*pj.pack_qty) grams,pj.batch_no,pj.labour_cost,pj.sealing_cost,pj.other_cost,pj.completed_at,
   COALESCE((SELECT SUM(psl.qty*psl.unit_cost) FROM packaging_stock_ledger psl WHERE psl.reference_type='packaging_job' AND psl.reference_id=pj.id AND psl.movement_type='production_out'),0) material_cost
   FROM packaging_jobs pj JOIN product_packs pp ON pp.id=pj.product_pack_id JOIN products p ON p.id=pp.product_id ORDER BY pj.id DESC LIMIT 300")->fetchAll();
@@ -247,7 +247,7 @@ if($route==='packaging'){
 
 if($route==='packaging.create' && $method==='POST'){
  csrf();$u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PACKAGING'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $pid=(int)($body['product_id']??0);$grams=(int)($body['grams']??0);$qty=(int)($body['qty']??0);$batch=trim((string)($body['batch_no']??''));
  $labour=(float)($body['labour_cost']??0);$sealing=(float)($body['sealing_cost']??0);$other=(float)($body['other_cost']??0);$mrp=(float)($body['mrp']??0);$bom=$body['bom']??null;
  $pq=$pdo->prepare('SELECT category FROM products WHERE id=? AND active=1');$pq->execute([$pid]);$category=$pq->fetchColumn();
@@ -392,7 +392,7 @@ if($route==='franchise.create' && $method==='POST'){
 }
 if($route==='sale.create' && $method==='POST'){
  csrf(); $u=auth();
- if(!in_array($u['role'],['OWNER','OPERATIONS','FRANCHISE','CASHIER'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','OPERATIONS','FRANCHISE','OUTLET_MANAGER','CASHIER'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $fid=(int)($body['franchise_id']??0); $items=$body['items']??[];
  if($fid<=0||!is_array($items)||count($items)===0) out(['ok'=>false,'code'=>'INVALID_SALE'],422);
  $q=$pdo->prepare('SELECT margin_percent FROM franchises WHERE id=? AND status<>"closed"'); $q->execute([$fid]); $fr=$q->fetch();
@@ -421,6 +421,32 @@ if($route==='sale.create' && $method==='POST'){
   $pdo->commit(); audit($pdo,(int)$u['id'],'create','pos_sale',(string)$saleId,['receipt'=>$receipt,'gross'=>$gross,'margin'=>$pct,'items'=>count($normalized)]);
   out(['ok'=>true,'id'=>$saleId,'receipt'=>$receipt,'gross_amount'=>$gross,'earned_margin'=>$earned],201);
  }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'SALE_CREATE_FAILED'],422);}
+}
+
+
+if($route==='franchise.margin.update' && $method==='POST'){
+ csrf(); $u=owner();
+ $id=(int)($body['id']??0); $pct=(float)($body['margin_percent']??0);
+ if($id<=0 || $pct<=0 || $pct>=100) out(['ok'=>false,'code'=>'INVALID_MARGIN'],422);
+ $tier=abs($pct-25)<0.0001?'Starter':(abs($pct-27)<0.0001?'Growth':(abs($pct-30)<0.0001?'Elite':'Manual'));
+ $mode=$tier==='Manual'?'manual':'tier';
+ $q=$pdo->prepare('SELECT id,margin_mode,margin_tier,margin_percent FROM franchises WHERE id=? LIMIT 1');
+ $q->execute([$id]); $before=$q->fetch(); if(!$before) out(['ok'=>false,'code'=>'FRANCHISE_NOT_FOUND'],404);
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare('UPDATE franchises SET margin_mode=?,margin_tier=?,margin_percent=? WHERE id=?');
+  $q->execute([$mode,$tier,$pct,$id]);
+  $q=$pdo->prepare('UPDATE franchise_margin_history SET effective_to=NOW() WHERE franchise_id=? AND effective_to IS NULL');
+  $q->execute([$id]);
+  $q=$pdo->prepare('INSERT INTO franchise_margin_history(franchise_id,margin_mode,margin_tier,margin_percent,reason,effective_from,approved_by) VALUES(?,?,?,?,?,NOW(),?)');
+  $q->execute([$id,$mode,$tier,$pct,$body['reason']??'Owner margin update',(int)$u['id']]);
+  $pdo->commit();
+  audit($pdo,(int)$u['id'],'update_margin','franchise',(string)$id,['before'=>$before,'margin_mode'=>$mode,'margin_tier'=>$tier,'margin_percent'=>$pct]);
+  out(['ok'=>true,'id'=>$id,'margin_mode'=>$mode,'margin_tier'=>$tier,'margin_percent'=>$pct]);
+ }catch(Throwable $e){
+  if($pdo->inTransaction())$pdo->rollBack();
+  out(['ok'=>false,'code'=>'MARGIN_UPDATE_FAILED'],422);
+ }
 }
 
 if($route==='finance.summary'){
@@ -756,7 +782,7 @@ if($route==='blends'){
 
 if($route==='blend.create' && $method==='POST'){
  csrf(); $u=auth();
- if(!in_array($u['role'],['OWNER','WAREHOUSE'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','WAREHOUSE','PRODUCTION'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
  $pid=(int)($body['product_id']??0);$output=(float)($body['output_kg']??0);$qc=(string)($body['qc_status']??'pass');$items=$body['components']??[];
  if($pid<=0||$output<0||!is_array($items)||count($items)<1||!in_array($qc,['pending','pass','hold','reject'],true)) out(['ok'=>false,'code'=>'INVALID_BLEND'],422);
  $pq=$pdo->prepare("SELECT id FROM products WHERE id=? AND active=1");$pq->execute([$pid]);if(!$pq->fetchColumn())out(['ok'=>false,'code'=>'PRODUCT_NOT_FOUND'],404);
