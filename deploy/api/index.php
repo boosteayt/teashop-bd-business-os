@@ -1205,9 +1205,9 @@ if($route==='operations.closure.handover.save' && $method==='POST'){
  $handover=(string)($body['handover_status']??'preparing');$stock=(string)($body['stock_status']??'pending');$dues=(string)($body['dues_status']??'pending');$docs=(string)($body['documents_status']??'pending');
  if(!in_array($handover,['preparing','ready','approved','reopened'],true)||!in_array($stock,['pending','counted','reconciled','returned'],true)||!in_array($dues,['pending','review','reconciled'],true)||!in_array($docs,['pending','partial','complete'],true))out(['ok'=>false,'code'=>'INVALID_HANDOVER_STATE'],422);
  if($handover==='approved'&&$u['role']!=='OWNER')out(['ok'=>false,'code'=>'OWNER_APPROVAL_REQUIRED'],403);
- if($handover==='ready'&&!in_array($stock,['reconciled','returned'],true))out(['ok'=>false,'code'=>'HANDOVER_STOCK_NOT_RECONCILED'],422);
- if($handover==='ready'&&$dues!=='reconciled')out(['ok'=>false,'code'=>'HANDOVER_DUES_NOT_RECONCILED'],422);
- if($handover==='ready'&&$docs!=='complete')out(['ok'=>false,'code'=>'HANDOVER_DOCUMENTS_INCOMPLETE'],422);
+ if(in_array($handover,['ready','approved'],true)&&!in_array($stock,['reconciled','returned'],true))out(['ok'=>false,'code'=>'HANDOVER_STOCK_NOT_RECONCILED'],422);
+ if(in_array($handover,['ready','approved'],true)&&$dues!=='reconciled')out(['ok'=>false,'code'=>'HANDOVER_DUES_NOT_RECONCILED'],422);
+ if(in_array($handover,['ready','approved'],true)&&$docs!=='complete')out(['ok'=>false,'code'=>'HANDOVER_DOCUMENTS_INCOMPLETE'],422);
  $approved=$handover==='approved';$q=$pdo->prepare("INSERT INTO operations_closure_handovers(franchise_id,handover_status,stock_status,dues_status,documents_status,evidence_ref,note,prepared_by,approved_by,prepared_at,approved_at)
   VALUES(?,?,?,?,?,?,?,?,?,NOW(),?) ON DUPLICATE KEY UPDATE handover_status=VALUES(handover_status),stock_status=VALUES(stock_status),dues_status=VALUES(dues_status),documents_status=VALUES(documents_status),evidence_ref=VALUES(evidence_ref),note=VALUES(note),prepared_by=VALUES(prepared_by),approved_by=VALUES(approved_by),prepared_at=NOW(),approved_at=VALUES(approved_at)");
  $q->execute([$fid,$handover,$stock,$dues,$docs,$body['evidence_ref']??null,$body['note']??null,(int)$u['id'],$approved?(int)$u['id']:null,$approved?date('Y-m-d H:i:s'):null]);
