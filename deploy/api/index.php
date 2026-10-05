@@ -640,6 +640,14 @@ if($route==='franchise.pipeline.update' && $method==='POST'){
  $q=$pdo->prepare("SELECT operational_state FROM outlet_profiles WHERE franchise_id=?");$q->execute([$fid]);$state=(string)($q->fetchColumn()?:'normal');
  if(in_array($stage,['suspended','closed'],true)&&$u['role']!=='OWNER')out(['ok'=>false,'code'=>'OWNER_APPROVAL_REQUIRED'],403);
  if($state==='suspended'&&$stage==='live'&&$u['role']!=='OWNER')out(['ok'=>false,'code'=>'OWNER_APPROVAL_REQUIRED'],403);
+ if($stage==='live'){
+  $q=$pdo->prepare("SELECT COUNT(*) FROM outlet_checklist_items WHERE franchise_id=? AND checklist_type='opening' AND required=1 AND completed=0");$q->execute([$fid]);$remaining=(int)$q->fetchColumn();
+  if($remaining>0)out(['ok'=>false,'code'=>'OPENING_CHECKLIST_INCOMPLETE','remaining'=>$remaining],422);
+ }
+ if($stage==='closed'){
+  $q=$pdo->prepare("SELECT COUNT(*) FROM outlet_checklist_items WHERE franchise_id=? AND checklist_type='closure' AND required=1 AND completed=0");$q->execute([$fid]);$remaining=(int)$q->fetchColumn();
+  if($remaining>0)out(['ok'=>false,'code'=>'CLOSURE_CHECKLIST_INCOMPLETE','remaining'=>$remaining],422);
+ }
 
  $pdo->beginTransaction();
  try{
