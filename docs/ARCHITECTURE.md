@@ -145,3 +145,40 @@ Physical counts create mismatch records only; they never auto-post inventory adj
 Settlement aging is computed from non-paid settlement periods. Positive net payable is shown as franchise payable and negative net payable as company receivable.
 
 Healthy-business score is a management ranking signal: Sales Target Achievement 40%, Outlet Health 25%, Inventory Health 20%, Settlement Discipline 15%.
+
+
+## Operations Patch 4 — Final Closure
+Patch 4 completes the franchise-network operating layer.
+
+### Alerts and escalation
+Automatic alert generation covers:
+- 5+ day POS inactivity (critical at 7+ days)
+- settlement overdue more than 7 days
+- overdue daily tasks
+- overdue support tickets
+- Watch / Non-Compliant SOP checks
+- unresolved physical stock mismatches
+- expired training
+- out-of-stock / under-7-day stock cover
+- 3+ customer tickets in 7 days
+
+Each signal has a stable alert key, severity, outlet/source linkage, Operations assignment and Open -> Acknowledged -> Resolved lifecycle. Newly detected or recurring alerts also create an Operations notification.
+
+### Performance
+Operations scorecard is fixed at:
+- Network Sales Growth: 30%
+- Stock Rotation: 20%
+- Outlet Health: 15%
+- Settlement Discipline: 15%
+- Outlet Retention: 10%
+- SOP Compliance: 10%
+
+The weighted score is separate from the performance-share rate. Share rate remains Owner-configured through the management-share tier/manual setting. The share base is distributable Franchise Division profit: verified POS sales less franchise earned margin and Finance-approved Franchise Division ledger expenses. Operations can generate a review but cannot approve it. Owner approves; Owner/Finance can mark an approved share paid.
+
+### Reports
+Regional/network reporting aggregates Division -> District outlet count, active/attention outlets, verified sales, targets, target achievement, health, alerts and overdue settlements. Month-end snapshots freeze the management summary without altering finance records.
+
+### Security closure
+Operations role is explicitly constrained to its approved network-management menu. Owner/specialist controls remain outside that role, including pricing, margin override, company finance administration, users/settings, final outlet suspension/closure and performance approval.
+
+The final verifier checks 99 Tea master rows, 12+ roles, every Patch 1–4 table, required source markers, scorecard weights, role menu boundary, business rules and forbidden personal-name/legacy-key leakage.
