@@ -108,6 +108,155 @@ function ops_priority(string $priority): string {
  return in_array($priority,['low','medium','high','critical'],true)?$priority:'medium';
 }
 
+function ops_alert_upsert(PDO $pdo,string $key,?int $fid,string $type,string $severity,string $title,string $message,?string $sourceType=null,?int $sourceId=null,?int $assignee=null): string {
+ $q=$pdo->prepare("SELECT id,status FROM operations_alerts WHERE alert_key=? LIMIT 1");$q->execute([$key]);$before=$q->fetch();
+ $q=$pdo->prepare("INSERT INTO operations_alerts(alert_key,franchise_id,alert_type,severity,title,message,status,source_type,source_id,assigned_user_id,detected_at,last_seen_at)
+   VALUES(?,?,?,?,?,?,'open',?,?,?,NOW(),NOW())
+   ON DUPLICATE KEY UPDATE franchise_id=VALUES(franchise_id),alert_type=VALUES(alert_type),severity=VALUES(severity),title=VALUES(title),message=VALUES(message),
+   source_type=VALUES(source_type),source_id=VALUES(source_id),assigned_user_id=COALESCE(VALUES(assigned_user_id),assigned_user_id),last_seen_at=NOW(),
+   resolved_at=IF(status='resolved',NULL,resolved_at),status=IF(status='resolved','open',status)");
+ $q->execute([$key,$fid,$type,$severity,$title,$message,$sourceType,$sourceId,$assignee]);
+ if(!$before || $before['status']==='resolved'){
+  $sev=$severity==='critical'?'critical':'warning';
+  $n=$pdo->prepare("INSERT INTO notifications(role_code,severity,title,message) VALUES('OPERATIONS',?,?,?)");
+  $n->execute([$sev,$title,$message]);
+ }
+ return $key;
+}
+function ops_refresh_alerts(PDO $pdo): array {
+ $keys=[];
+ $generatedTypes=['pos_inactive','settlement_overdue','task_overdue','ticket_overdue','compliance','stock_mismatch','training_expired','stock_risk','complaint_spike'];
+
+ $opsUser=(int)($pdo->query("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code='OPERATIONS' ORDER BY u.id LIMIT 1")->fetchColumn()?:0);
+ $assignee=$opsUser?:null;
+
+ $rows=$pdo->query("SELECT f.id,f.code,f.name,f.status,f.opened_at,MAX(ps.sold_at) last_sale_at
+   FROM franchises f LEFT JOIN pos_sales ps ON ps.franchise_id=f.id
+   WHERE f.status IN('active','watch','critical')
+   GROUP BY f.id,f.code,f.name,f.status,f.opened_at")->fetchAll();
+ foreach($rows as $r){
+  $last=$r['last_sale_at']?:$r['opened_at'];
+  if(!$last)continue;
+  $days=max(0,(int)floor((time()-strtotime($last))/86400));
+  if($days>=5){
+   $sev=$days>=7?'critical':'warning';$key='pos_inactive:'.$r['id'];
+   $keys[]=ops_alert_upsert($pdo,$key,(int)$r['id'],'pos_inactive',$sev,'POS inactivity · '.$r['name'],$days.' days without verified POS sale','franchise',(int)$r['id'],$assignee);
+  }
+ }
+
+ $rows=$pdo->query("SELECT s.id,s.franchise_id,f.name,DATEDIFF(CURDATE(),s.period_end) age_days,s.net_payable,s.status
+   FROM settlements s JOIN franchises f ON f.id=s.franchise_id
+   WHERE s.status<>'paid' AND DATEDIFF(CURDATE(),s.period_end)>7")->fetchAll();
+ foreach($rows as $r){
+  $age=(int)$r['age_days'];$sev=$age>15?'critical':'warning';$key='settlement_overdue:'.$r['id'];
+  $keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'settlement_overdue',$sev,'Settlement overdue · '.$r['name'],$age.' days old · '.number_format(abs((float)$r['net_payable']),2),'settlement',(int)$r['id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT t.id,t.franchise_id,COALESCE(f.name,'Network') outlet,t.title,t.priority,t.due_at FROM operations_tasks t LEFT JOIN franchises f ON f.id=t.franchise_id
+   WHERE t.status NOT IN('done','cancelled') AND t.due_at<NOW()")->fetchAll();
+ foreach($rows as $r){
+  $sev=$r['priority']==='critical'?'critical':'warning';$key='task_overdue:'.$r['id'];
+  $keys[]=ops_alert_upsert($pdo,$key,$r['franchise_id']?(int)$r['franchise_id']:null,'task_overdue',$sev,'Task overdue · '.$r['outlet'],$r['title'].' · due '.$r['due_at'],'operations_task',(int)$r['id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT t.id,t.franchise_id,f.name,t.ticket_no,t.subject,t.priority,t.due_at FROM support_tickets t JOIN franchises f ON f.id=t.franchise_id
+   WHERE t.status NOT IN('resolved','closed','cancelled') AND t.due_at<NOW()")->fetchAll();
+ foreach($rows as $r){
+  $sev=$r['priority']==='critical'?'critical':'warning';$key='ticket_overdue:'.$r['id'];
+  $keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'ticket_overdue',$sev,'Ticket overdue · '.$r['name'],$r['ticket_no'].' · '.$r['subject'],'support_ticket',(int)$r['id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT c.id,c.franchise_id,f.name,c.status,c.overall_score,c.corrective_due_at FROM outlet_compliance_checks c JOIN franchises f ON f.id=c.franchise_id
+   WHERE c.resolved_at IS NULL AND c.status IN('watch','non_compliant')")->fetchAll();
+ foreach($rows as $r){
+  $sev=$r['status']==='non_compliant'?'critical':'warning';$key='compliance:'.$r['id'];
+  $keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'compliance',$sev,'Compliance action · '.$r['name'],'Score '.number_format((float)$r['overall_score'],1).($r['corrective_due_at']?' · due '.$r['corrective_due_at']:''),'compliance_check',(int)$r['id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT sc.id,sc.franchise_id,f.name,sc.variance_qty,sc.variance_value FROM outlet_stock_counts sc JOIN franchises f ON f.id=sc.franchise_id
+   JOIN (SELECT franchise_id,product_pack_id,MAX(id) max_id FROM outlet_stock_counts GROUP BY franchise_id,product_pack_id) x ON x.max_id=sc.id
+   WHERE sc.status='review' AND ABS(sc.variance_qty)>0.001")->fetchAll();
+ foreach($rows as $r){
+  $sev=abs((float)$r['variance_value'])>=1000?'critical':'warning';$key='stock_mismatch:'.$r['id'];
+  $keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'stock_mismatch',$sev,'Stock mismatch · '.$r['name'],'Variance '.number_format((float)$r['variance_qty'],3).' · value '.number_format((float)$r['variance_value'],2),'outlet_stock_count',(int)$r['id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT tr.id,tr.franchise_id,f.name,tr.course_title,tr.expires_at FROM outlet_training_records tr JOIN franchises f ON f.id=tr.franchise_id
+   WHERE tr.status='expired' OR (tr.expires_at IS NOT NULL AND tr.expires_at<CURDATE())")->fetchAll();
+ foreach($rows as $r){
+  $key='training_expired:'.$r['id'];$keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'training_expired','warning','Training expired · '.$r['name'],$r['course_title'].($r['expires_at']?' · '.$r['expires_at']:''),'outlet_training',(int)$r['id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT x.franchise_id,f.name,
+   SUM(CASE WHEN x.stock_qty<=0 THEN 1 ELSE 0 END) out_count,
+   SUM(CASE WHEN x.daily_velocity>0 AND x.stock_qty/x.daily_velocity<7 THEN 1 ELSE 0 END) low_count
+   FROM (
+    SELECT il.location_id franchise_id,il.product_pack_id,
+     SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) stock_qty,
+     COALESCE((SELECT SUM(psi.qty)/30 FROM pos_sales ps JOIN pos_sale_items psi ON psi.pos_sale_id=ps.id WHERE ps.franchise_id=il.location_id AND psi.product_pack_id=il.product_pack_id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) daily_velocity
+    FROM inventory_ledger il WHERE il.location_type='franchise' AND il.location_id IS NOT NULL GROUP BY il.location_id,il.product_pack_id
+   ) x JOIN franchises f ON f.id=x.franchise_id WHERE f.status IN('active','watch','critical') GROUP BY x.franchise_id,f.name HAVING out_count>0 OR low_count>0")->fetchAll();
+ foreach($rows as $r){
+  $sev=(int)$r['out_count']>0?'critical':'warning';$key='stock_risk:'.$r['franchise_id'];
+  $keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'stock_risk',$sev,'Stock risk · '.$r['name'],(int)$r['out_count'].' out-of-stock · '.(int)$r['low_count'].' low-cover SKU lines','franchise',(int)$r['franchise_id'],$assignee);
+ }
+
+ $rows=$pdo->query("SELECT t.franchise_id,f.name,COUNT(*) cnt FROM support_tickets t JOIN franchises f ON f.id=t.franchise_id
+   WHERE t.category='customer' AND t.opened_at>=DATE_SUB(NOW(),INTERVAL 7 DAY) GROUP BY t.franchise_id,f.name HAVING cnt>=3")->fetchAll();
+ foreach($rows as $r){
+  $key='complaint_spike:'.$r['franchise_id'];$keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'complaint_spike','critical','Customer complaint spike · '.$r['name'],(int)$r['cnt'].' customer tickets in the last 7 days','franchise',(int)$r['franchise_id'],$assignee);
+ }
+
+ $q=$pdo->query("SELECT id,alert_key,alert_type FROM operations_alerts WHERE status IN('open','acknowledged')");
+ foreach($q->fetchAll() as $r){
+  if(in_array($r['alert_type'],$generatedTypes,true) && !in_array($r['alert_key'],$keys,true)){
+   $u=$pdo->prepare("UPDATE operations_alerts SET status='resolved',resolved_at=NOW() WHERE id=?");$u->execute([(int)$r['id']]);
+  }
+ }
+ return ['generated'=>count($keys),'open'=>(int)$pdo->query("SELECT COUNT(*) FROM operations_alerts WHERE status='open'")->fetchColumn(),'critical'=>(int)$pdo->query("SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical'")->fetchColumn()];
+}
+function ops_performance_preview(PDO $pdo,string $period): array {
+ if(!preg_match('/^\d{4}-\d{2}$/',$period))out(['ok'=>false,'code'=>'INVALID_PERIOD'],422);
+ $start=$period.'-01';$end=date('Y-m-t',strtotime($start));$prevStart=date('Y-m-01',strtotime($start.' -1 month'));$prevEnd=date('Y-m-t',strtotime($prevStart));
+
+ $q=$pdo->prepare("SELECT COALESCE(SUM(gross_amount),0) sales,COALESCE(SUM(earned_margin),0) margin FROM pos_sales WHERE DATE(sold_at) BETWEEN ? AND ?");$q->execute([$start,$end]);$cur=$q->fetch();
+ $q->execute([$prevStart,$prevEnd]);$prev=$q->fetch();
+ $curSales=(float)$cur['sales'];$prevSales=(float)$prev['sales'];$growth=$prevSales>0?(($curSales-$prevSales)/$prevSales*100):($curSales>0?10:0);
+ $salesScore=max(0,min(100,50+($growth*5)));
+
+ $stockLines=(int)$pdo->query("SELECT COUNT(*) FROM (SELECT location_id,product_pack_id,SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty WHEN movement_type IN('transfer_out','sale','damage') THEN -qty ELSE qty END) qty FROM inventory_ledger WHERE location_type='franchise' GROUP BY location_id,product_pack_id HAVING qty>0) z")->fetchColumn();
+ $q=$pdo->prepare("SELECT COUNT(DISTINCT CONCAT(ps.franchise_id,':',psi.product_pack_id)) FROM pos_sales ps JOIN pos_sale_items psi ON psi.pos_sale_id=ps.id WHERE DATE(ps.sold_at) BETWEEN ? AND ?");$q->execute([$start,$end]);$rotated=(int)$q->fetchColumn();
+ $stockScore=$stockLines>0?max(0,min(100,$rotated/$stockLines*100)):0;
+
+ $healthScore=(float)($pdo->query("SELECT COALESCE(AVG(h.total_score),0) FROM outlet_health_checks h JOIN (SELECT franchise_id,MAX(id) id FROM outlet_health_checks GROUP BY franchise_id) x ON x.id=h.id")->fetchColumn()?:0);
+
+ $q=$pdo->prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='paid' OR DATEDIFF(CURDATE(),period_end)<=7 THEN 1 ELSE 0 END) good FROM settlements WHERE period_end BETWEEN ? AND ?");$q->execute([$start,$end]);$settle=$q->fetch();
+ $settlementScore=(int)$settle['total']>0?max(0,min(100,(float)$settle['good']/(int)$settle['total']*100)):100;
+
+ $totalOutlets=(int)$pdo->query("SELECT COUNT(*) FROM franchises WHERE created_at<=CONCAT(". $pdo->quote($end) .",' 23:59:59')")->fetchColumn();
+ $retained=(int)$pdo->query("SELECT COUNT(*) FROM franchises WHERE created_at<=CONCAT(". $pdo->quote($end) .",' 23:59:59') AND status<>'closed'")->fetchColumn();
+ $retentionScore=$totalOutlets>0?max(0,min(100,$retained/$totalOutlets*100)):0;
+
+ $q=$pdo->prepare("SELECT COALESCE(AVG(overall_score),0) FROM outlet_compliance_checks WHERE DATE(checked_at) BETWEEN ? AND ?");$q->execute([$start,$end]);$complianceScore=(float)$q->fetchColumn();
+ if($complianceScore<=0)$complianceScore=(float)($pdo->query("SELECT COALESCE(AVG(h.compliance_score),0) FROM outlet_health_checks h JOIN (SELECT franchise_id,MAX(id) id FROM outlet_health_checks GROUP BY franchise_id) x ON x.id=h.id")->fetchColumn()?:0);
+
+ $total=round($salesScore*.30+$stockScore*.20+$healthScore*.15+$settlementScore*.15+$retentionScore*.10+$complianceScore*.10,2);
+
+ $q=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN entry_type='debit' THEN amount ELSE -amount END),0) FROM finance_ledger WHERE division='FRANCHISE' AND entry_date BETWEEN ? AND ?");$q->execute([$start,$end]);$expenses=max(0,(float)$q->fetchColumn());
+ $distributable=max(0,round($curSales-(float)$cur['margin']-$expenses,2));
+
+ $settings=[];foreach($pdo->query("SELECT setting_key,setting_value FROM system_settings WHERE setting_key IN('management_share_active_tier','management_share_manual_percent')")->fetchAll() as $r)$settings[$r['setting_key']]=$r['setting_value'];
+ $tier=$settings['management_share_active_tier']??'Base';$pct=['Base'=>15.0,'Growth'=>20.0,'Elite'=>25.0][$tier]??(float)($settings['management_share_manual_percent']??20);
+ if($tier==='Manual')$pct=(float)($settings['management_share_manual_percent']??20);
+ $share=round($distributable*$pct/100,2);
+
+ return ['period'=>$period,'period_start'=>$start,'period_end'=>$end,'previous_start'=>$prevStart,'previous_end'=>$prevEnd,
+  'sales_growth_percent'=>round($growth,2),'sales_growth_score'=>round($salesScore,2),'stock_rotation_score'=>round($stockScore,2),'outlet_health_score'=>round($healthScore,2),
+  'settlement_score'=>round($settlementScore,2),'retention_score'=>round($retentionScore,2),'compliance_score'=>round($complianceScore,2),'total_score'=>$total,
+  'verified_sales'=>round($curSales,2),'franchise_earned_margin'=>round((float)$cur['margin'],2),'approved_franchise_expenses'=>round($expenses,2),'distributable_profit'=>$distributable,
+  'management_tier'=>$tier,'performance_share_percent'=>round($pct,2),'performance_share_amount'=>$share,'company_net_after_share'=>round($distributable-$share,2)];
+}
+
 if($route==='health') out(['ok'=>true,'service'=>'Tea Shop BD Business OS API','database'=>'connected']);
 
 if($route==='bootstrap.users' && $method==='POST'){
@@ -410,6 +559,126 @@ if($route==='inventory.transfer.create' && $method==='POST'){
 
 
 
+
+
+if($route==='operations.alerts.refresh' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $result=ops_refresh_alerts($pdo);
+ out(['ok'=>true]+$result);
+}
+
+if($route==='operations.alerts'){
+ outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $rows=$pdo->query("SELECT a.id,a.alert_key,a.franchise_id,f.code outlet_code,f.name outlet,a.alert_type,a.severity,a.title,a.message,a.status,a.source_type,a.source_id,a.assigned_user_id,u.name assigned_to,a.detected_at,a.last_seen_at,a.acknowledged_at,a.resolved_at
+   FROM operations_alerts a LEFT JOIN franchises f ON f.id=a.franchise_id LEFT JOIN users u ON u.id=a.assigned_user_id
+   ORDER BY FIELD(a.status,'open','acknowledged','resolved'),FIELD(a.severity,'critical','warning','info'),a.last_seen_at DESC,a.id DESC LIMIT 500")->fetchAll();
+ $summary=['open'=>0,'critical'=>0,'warning'=>0,'acknowledged'=>0,'resolved'=>0];
+ foreach($rows as $r){if(isset($summary[$r['status']]))$summary[$r['status']]++;if($r['status']==='open'&&isset($summary[$r['severity']]))$summary[$r['severity']]++;}
+ out(['ok'=>true,'summary'=>$summary,'alerts'=>$rows]);
+}
+
+if($route==='operations.alert.update' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$id=(int)($body['id']??0);$status=(string)($body['status']??'');
+ if($id<=0||!in_array($status,['open','acknowledged','resolved'],true))out(['ok'=>false,'code'=>'INVALID_ALERT_ACTION'],422);
+ $q=$pdo->prepare("SELECT * FROM operations_alerts WHERE id=?");$q->execute([$id]);$row=$q->fetch();if(!$row)out(['ok'=>false,'code'=>'ALERT_NOT_FOUND'],404);
+ $q=$pdo->prepare("UPDATE operations_alerts SET status=?,acknowledged_at=IF(?='acknowledged',COALESCE(acknowledged_at,NOW()),acknowledged_at),resolved_at=IF(?='resolved',NOW(),IF(?='open',NULL,resolved_at)) WHERE id=?");
+ $q->execute([$status,$status,$status,$status,$id]);
+ if(!empty($row['franchise_id']))outlet_timeline($pdo,(int)$row['franchise_id'],(int)$u['id'],'alert','Alert '.$status,$row['title'],'operations_alert',$id,['status'=>$status]);
+ audit($pdo,(int)$u['id'],'alert_'.$status,'operations_alert',(string)$id,['alert_key'=>$row['alert_key'],'status'=>$status]);
+ out(['ok'=>true,'id'=>$id,'status'=>$status]);
+}
+
+if($route==='operations.performance.preview'){
+ outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $period=(string)($_GET['period']??date('Y-m'));
+ out(['ok'=>true,'preview'=>ops_performance_preview($pdo,$period)]);
+}
+
+if($route==='operations.performance.generate' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$period=(string)($body['period']??date('Y-m'));$x=ops_performance_preview($pdo,$period);
+ $q=$pdo->prepare("SELECT id,status FROM performance_records WHERE role_code='OPERATIONS' AND period_start=? AND period_end=? ORDER BY id DESC LIMIT 1");$q->execute([$x['period_start'],$x['period_end']]);$existing=$q->fetch();
+ if($existing&&in_array($existing['status'],['approved','paid'],true))out(['ok'=>false,'code'=>'PERFORMANCE_ALREADY_APPROVED'],422);
+ $opsUser=(int)($pdo->query("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code='OPERATIONS' ORDER BY u.id LIMIT 1")->fetchColumn()?:0);
+ if($existing){
+  $q=$pdo->prepare("UPDATE performance_records SET user_id=?,sales_growth_score=?,stock_rotation_score=?,outlet_health_score=?,settlement_score=?,retention_score=?,compliance_score=?,total_score=?,distributable_profit=?,performance_share_percent=?,performance_share_amount=?,status='review',approved_by=NULL WHERE id=?");
+  $q->execute([$opsUser?:null,$x['sales_growth_score'],$x['stock_rotation_score'],$x['outlet_health_score'],$x['settlement_score'],$x['retention_score'],$x['compliance_score'],$x['total_score'],$x['distributable_profit'],$x['performance_share_percent'],$x['performance_share_amount'],(int)$existing['id']]);$id=(int)$existing['id'];
+ }else{
+  $q=$pdo->prepare("INSERT INTO performance_records(role_code,user_id,period_start,period_end,sales_growth_score,stock_rotation_score,outlet_health_score,settlement_score,retention_score,compliance_score,total_score,distributable_profit,performance_share_percent,performance_share_amount,status) VALUES('OPERATIONS',?,?,?,?,?,?,?,?,?,?,?,?,?,'review')");
+  $q->execute([$opsUser?:null,$x['period_start'],$x['period_end'],$x['sales_growth_score'],$x['stock_rotation_score'],$x['outlet_health_score'],$x['settlement_score'],$x['retention_score'],$x['compliance_score'],$x['total_score'],$x['distributable_profit'],$x['performance_share_percent'],$x['performance_share_amount']]);$id=(int)$pdo->lastInsertId();
+ }
+ audit($pdo,(int)$u['id'],'generate','operations_performance',(string)$id,$x);
+ out(['ok'=>true,'id'=>$id,'status'=>'review','preview'=>$x]);
+}
+
+if($route==='operations.performance.approve' && $method==='POST'){
+ csrf();$u=owner();$id=(int)($body['id']??0);
+ $q=$pdo->prepare("UPDATE performance_records SET status='approved',approved_by=? WHERE id=? AND role_code='OPERATIONS' AND status='review'");$q->execute([(int)$u['id'],$id]);
+ if($q->rowCount()!==1)out(['ok'=>false,'code'=>'PERFORMANCE_NOT_APPROVABLE'],422);
+ audit($pdo,(int)$u['id'],'approve','operations_performance',(string)$id);
+ out(['ok'=>true,'id'=>$id,'status'=>'approved']);
+}
+
+if($route==='operations.performance.paid' && $method==='POST'){
+ csrf();$u=auth();if(!in_array($u['role'],['OWNER','FINANCE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);$id=(int)($body['id']??0);
+ $q=$pdo->prepare("UPDATE performance_records SET status='paid' WHERE id=? AND role_code='OPERATIONS' AND status='approved'");$q->execute([$id]);
+ if($q->rowCount()!==1)out(['ok'=>false,'code'=>'PERFORMANCE_NOT_PAYABLE'],422);
+ audit($pdo,(int)$u['id'],'mark_paid','operations_performance',(string)$id);
+ out(['ok'=>true,'id'=>$id,'status'=>'paid']);
+}
+
+if($route==='operations.performance.history'){
+ $u=auth();if(!in_array($u['role'],['OWNER','OPERATIONS','REGIONAL','FINANCE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $rows=$pdo->query("SELECT pr.id,pr.period_start,pr.period_end,pr.sales_growth_score,pr.stock_rotation_score,pr.outlet_health_score,pr.settlement_score,pr.retention_score,pr.compliance_score,pr.total_score,pr.distributable_profit,pr.performance_share_percent,pr.performance_share_amount,pr.status,u.name user_name,a.name approved_by_name,pr.created_at
+   FROM performance_records pr LEFT JOIN users u ON u.id=pr.user_id LEFT JOIN users a ON a.id=pr.approved_by WHERE pr.role_code='OPERATIONS' ORDER BY pr.period_end DESC,pr.id DESC LIMIT 60")->fetchAll();
+ out(['ok'=>true,'records'=>$rows]);
+}
+
+if($route==='operations.network.report'){
+ outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$period=(string)($_GET['period']??date('Y-m'));if(!preg_match('/^\d{4}-\d{2}$/',$period))out(['ok'=>false,'code'=>'INVALID_PERIOD'],422);
+ $start=$period.'-01';$end=date('Y-m-t',strtotime($start));
+ $rows=$pdo->prepare("SELECT COALESCE(NULLIF(op.division,''),'Unassigned') division,COALESCE(NULLIF(f.district,''),'Unassigned') district,
+   COUNT(*) outlets,SUM(f.status='active') active_outlets,SUM(f.status IN('watch','critical')) attention_outlets,
+   COALESCE(SUM(s.sales),0) sales,COALESCE(SUM(t.target),0) target,
+   COALESCE(AVG(h.score),0) health_score,
+   COALESCE(SUM(a.open_alerts),0) open_alerts,COALESCE(SUM(a.critical_alerts),0) critical_alerts,
+   COALESCE(SUM(st.overdue),0) overdue_settlements
+   FROM franchises f
+   LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+   LEFT JOIN (SELECT franchise_id,SUM(gross_amount) sales FROM pos_sales WHERE DATE(sold_at) BETWEEN ? AND ? GROUP BY franchise_id) s ON s.franchise_id=f.id
+   LEFT JOIN (SELECT franchise_id,SUM(sales_target) target FROM outlet_sales_targets WHERE period_start<=? AND period_end>=? GROUP BY franchise_id) t ON t.franchise_id=f.id
+   LEFT JOIN (SELECT h1.franchise_id,h1.total_score score FROM outlet_health_checks h1 JOIN (SELECT franchise_id,MAX(id) id FROM outlet_health_checks GROUP BY franchise_id) hx ON hx.id=h1.id) h ON h.franchise_id=f.id
+   LEFT JOIN (SELECT franchise_id,SUM(status='open') open_alerts,SUM(status='open' AND severity='critical') critical_alerts FROM operations_alerts GROUP BY franchise_id) a ON a.franchise_id=f.id
+   LEFT JOIN (SELECT franchise_id,SUM(status<>'paid' AND DATEDIFF(CURDATE(),period_end)>7) overdue FROM settlements GROUP BY franchise_id) st ON st.franchise_id=f.id
+   WHERE f.status<>'closed'
+   GROUP BY COALESCE(NULLIF(op.division,''),'Unassigned'),COALESCE(NULLIF(f.district,''),'Unassigned')
+   ORDER BY division,district");
+ $rows->execute([$start,$end,$end,$start]);$regions=$rows->fetchAll();
+ foreach($regions as &$r)$r['target_achievement']=(float)$r['target']>0?round((float)$r['sales']/(float)$r['target']*100,1):0;unset($r);
+ $perf=ops_performance_preview($pdo,$period);
+ $alerts=$pdo->query("SELECT severity,status,COUNT(*) count FROM operations_alerts GROUP BY severity,status")->fetchAll();
+ out(['ok'=>true,'period'=>$period,'period_start'=>$start,'period_end'=>$end,'regions'=>$regions,'performance'=>$perf,'alert_summary'=>$alerts]);
+}
+
+if($route==='operations.report.snapshot' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$period=(string)($body['period']??date('Y-m'));if(!preg_match('/^\d{4}-\d{2}$/',$period))out(['ok'=>false,'code'=>'INVALID_PERIOD'],422);
+ $start=$period.'-01';$end=date('Y-m-t',strtotime($start));$perf=ops_performance_preview($pdo,$period);
+ $payload=['performance'=>$perf,'open_alerts'=>(int)$pdo->query("SELECT COUNT(*) FROM operations_alerts WHERE status='open'")->fetchColumn(),'critical_alerts'=>(int)$pdo->query("SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical'")->fetchColumn(),'generated_at'=>date('c')];
+ $q=$pdo->prepare("INSERT INTO operations_report_snapshots(period_start,period_end,report_type,payload_json,generated_by) VALUES(?,?,'network_monthly',?,?)");
+ $q->execute([$start,$end,json_encode($payload,JSON_UNESCAPED_UNICODE),(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ audit($pdo,(int)$u['id'],'snapshot','operations_report',(string)$id,['period'=>$period]);
+ out(['ok'=>true,'id'=>$id,'period'=>$period]);
+}
+
+if($route==='operations.security.audit'){
+ $u=outlet_ops_user(['OWNER','OPERATIONS']);
+ $tables=['outlet_profiles','outlet_pipeline','operations_tasks','support_tickets','outlet_sales_targets','operations_alerts','performance_records','audit_logs'];$present=[];
+ $q=$pdo->prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?");foreach($tables as $t){$q->execute([$t]);$present[$t]=(int)$q->fetchColumn()===1;}
+ $opsUsers=(int)$pdo->query("SELECT COUNT(*) FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code='OPERATIONS'")->fetchColumn();
+ out(['ok'=>true,'role'=>$u['role'],'operations_users'=>$opsUsers,'tables'=>$present,
+  'operations_allowed'=>['Dashboard','Tea','Inventory / Warehouse','Outlets / Franchise','Franchise & Retail Operations','POS / Sales','Margin & Settlement','Performance & Incentives','Customers','Logistics','Reports','Notifications'],
+  'owner_controlled'=>['Purchase & Suppliers','Blending & Production authority','QC approval','Pricing Engine','Margin override','Finance & Accounts','Users & Roles','Audit administration','Settings','Suspend / Close final approval','Performance approval'],
+  'rules'=>['stock_received_is_not_profit'=>true,'verified_pos_sale_earns_margin'=>true,'operations_cannot_override_margin'=>true,'operations_cannot_approve_own_performance'=>true]]);
+}
 
 if($route==='operations.intelligence'){
  $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
@@ -843,7 +1112,9 @@ if($route==='operations.dashboard'){
    (SELECT COUNT(*) FROM field_visits WHERE status='scheduled' AND scheduled_at BETWEEN NOW() AND DATE_ADD(NOW(),INTERVAL 7 DAY)) visits_next_7d,
    (SELECT COUNT(*) FROM outlet_compliance_checks WHERE status IN('watch','non_compliant') AND resolved_at IS NULL) open_compliance,
    (SELECT COUNT(*) FROM outlet_training_records WHERE status IN('pending','scheduled','expired') OR (expires_at IS NOT NULL AND expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))) training_attention,
-   (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing")->fetch();
+   (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing,
+   (SELECT COUNT(*) FROM operations_alerts WHERE status='open') open_alerts,
+   (SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical') critical_alerts")->fetch();
 
  $currentSales=(float)($current['sales']??0);
  $previousSales=(float)($previous['sales']??0);
@@ -878,6 +1149,8 @@ if($route==='operations.dashboard'){
      'open_compliance'=>(int)($work['open_compliance']??0),
      'training_attention'=>(int)($work['training_attention']??0),
      'active_marketing'=>(int)($work['active_marketing']??0),
+     'open_alerts'=>(int)($work['open_alerts']??0),
+     'critical_alerts'=>(int)($work['critical_alerts']??0),
    ],
    'outlets'=>$outlets,
    'low_performers'=>$low,

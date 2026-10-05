@@ -59,6 +59,7 @@ mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrat
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_operations_patch1_outlet_network_core.sql"
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_operations_patch2_daily_support.sql"
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_operations_patch3_intelligence.sql"
+mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_operations_patch4_final_closure.sql"
 
 echo "Creating first-login users..."
 php <<'PHPBOOT'
