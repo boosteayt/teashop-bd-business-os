@@ -423,12 +423,12 @@ if($route==='operations.workboard'){
    ORDER BY (t.status NOT IN('done','cancelled')) DESC,(t.due_at IS NULL),t.due_at,t.id DESC LIMIT 300")->fetchAll();
 
  $visits=$pdo->query("SELECT v.id,v.franchise_id,f.code outlet_code,f.name outlet,v.visit_type,v.status,v.scheduled_at,v.visited_at,v.visitor_user_id,u.name visitor,
-   v.overall_score,v.findings,v.corrective_action,v.next_visit_at,v.created_at
+   v.cleanliness_score,v.branding_score,v.product_display_score,v.pricing_compliance_score,v.pos_usage_score,v.stock_handling_score,v.overall_score,v.findings,v.corrective_action,v.next_visit_at,v.created_at
    FROM field_visits v JOIN franchises f ON f.id=v.franchise_id LEFT JOIN users u ON u.id=v.visitor_user_id
    ORDER BY (v.status='scheduled') DESC,v.scheduled_at DESC,v.id DESC LIMIT 200")->fetchAll();
 
  $tickets=$pdo->query("SELECT t.id,t.ticket_no,t.franchise_id,f.code outlet_code,f.name outlet,t.category,t.subject,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,
-   t.opened_at,t.due_at,t.first_response_at,t.resolved_at,t.resolution,t.escalation_level,t.escalated_at,
+   t.opened_at,t.due_at,t.first_response_at,t.resolved_at,t.resolution,t.escalation_level,t.escalated_at,(SELECT stu.note FROM support_ticket_updates stu WHERE stu.support_ticket_id=t.id ORDER BY stu.id DESC LIMIT 1) last_update,
    CASE WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue'
         WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon'
         ELSE 'on_time' END sla_status
@@ -550,7 +550,7 @@ if($route==='operations.ticket.update' && $method==='POST'){
  $q=$pdo->prepare("INSERT INTO support_ticket_updates(support_ticket_id,update_type,note,old_status,new_status,created_by) VALUES(?,?,?,?,?,?)");
  $q->execute([$id,$type,$body['note']??($escalate?'Escalated':'Status updated'),$before['status'],$status,(int)$u['id']]);
  outlet_timeline($pdo,(int)$before['franchise_id'],(int)$u['id'],'support_ticket','Ticket '.$status,$before['ticket_no'].' · '.$before['subject'],'support_ticket',$id,['escalation_level'=>$level]);
- audit($pdo,(int)$u['id'],'update','support_ticket',(string)$id,['status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'escalation_level'=>$level]);
+ audit($pdo,(int)$u['id'],'update','support_ticket',(string)$id,['status'=>$status,'priority'=>$priority,'assigned_user_id'=>$assignee,'due_at'=>$due,'escalation_level'=>$level]);
  out(['ok'=>true,'id'=>$id,'status'=>$status,'escalation_level'=>$level]);
 }
 
@@ -622,7 +622,7 @@ if($route==='operations.marketing.save' && $method==='POST'){
 
 if($route==='operations.dashboard'){
  $u=auth();
- if(!in_array($u['role'],['OWNER','OPERATIONS'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ if(!in_array($u['role'],['OWNER','OPERATIONS','REGIONAL'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
 
  $today=date('Y-m-d');
  $monthStart=date('Y-m-01');
