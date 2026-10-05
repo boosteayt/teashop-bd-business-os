@@ -1134,8 +1134,11 @@ if($route==='operations.round2'){
 
 if($route==='operations.automation.run' && $method==='POST'){
  csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);
- try{$result=ops_v2_run_automation($pdo,$fid>0?$fid:null,(int)$u['id']);out(['ok'=>true]+$result);}
- catch(Throwable $e){error_log('operations.automation.run failed type='.get_class($e).' code='.$e->getCode());out(['ok'=>false,'code'=>'OPERATIONS_AUTOMATION_FAILED'],500);}
+ try{
+  $alertRefresh=$fid>0?ops_refresh_alerts_for_franchise($pdo,$fid):ops_refresh_alerts($pdo);
+  $result=ops_v2_run_automation($pdo,$fid>0?$fid:null,(int)$u['id']);
+  out(['ok'=>true,'alert_refresh'=>$alertRefresh]+$result);
+ }catch(Throwable $e){error_log('operations.automation.run failed type='.get_class($e).' code='.$e->getCode());out(['ok'=>false,'code'=>'OPERATIONS_AUTOMATION_FAILED'],500);}
 }
 
 if($route==='operations.settlement.followup.save' && $method==='POST'){
