@@ -818,6 +818,20 @@ if($route==='franchise.360'){
 
  $q=$pdo->prepare("SELECT id,period_start,period_end,verified_sales,earned_margin,net_payable,status,locked_at FROM settlements WHERE franchise_id=? ORDER BY period_end DESC,id DESC LIMIT 12");$q->execute([$fid]);$settlements=$q->fetchAll();
 
+ $q=$pdo->prepare("SELECT t.id,t.task_type,t.title,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,t.due_at,t.completed_at,t.escalation_level,t.escalated_at,t.created_at,
+   CASE WHEN t.status NOT IN('done','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue' WHEN t.status NOT IN('done','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon' ELSE 'on_time' END sla_status
+   FROM operations_tasks t LEFT JOIN users u ON u.id=t.assigned_user_id WHERE t.franchise_id=? ORDER BY (t.status NOT IN('done','cancelled')) DESC,t.due_at,t.id DESC LIMIT 100");$q->execute([$fid]);$opsTasks=$q->fetchAll();
+ $q=$pdo->prepare("SELECT v.id,v.visit_type,v.status,v.scheduled_at,v.visited_at,v.visitor_user_id,u.name visitor,v.overall_score,v.findings,v.corrective_action,v.next_visit_at
+   FROM field_visits v LEFT JOIN users u ON u.id=v.visitor_user_id WHERE v.franchise_id=? ORDER BY v.scheduled_at DESC,v.id DESC LIMIT 100");$q->execute([$fid]);$visits=$q->fetchAll();
+ $q=$pdo->prepare("SELECT t.id,t.ticket_no,t.category,t.subject,t.detail,t.priority,t.status,t.assigned_user_id,u.name assigned_to,t.opened_at,t.due_at,t.first_response_at,t.resolved_at,t.resolution,t.escalation_level,t.escalated_at,
+   CASE WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<NOW() THEN 'overdue' WHEN t.status NOT IN('resolved','closed','cancelled') AND t.due_at IS NOT NULL AND t.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon' ELSE 'on_time' END sla_status
+   FROM support_tickets t LEFT JOIN users u ON u.id=t.assigned_user_id WHERE t.franchise_id=? ORDER BY (t.status NOT IN('resolved','closed','cancelled')) DESC,t.due_at,t.id DESC LIMIT 100");$q->execute([$fid]);$tickets=$q->fetchAll();
+ $q=$pdo->prepare("SELECT c.id,c.channel,c.direction,c.subject,c.note,c.promised_date,c.follow_up_at,u.name created_by_name,c.created_at FROM outlet_communications c LEFT JOIN users u ON u.id=c.created_by WHERE c.franchise_id=? ORDER BY c.created_at DESC,c.id DESC LIMIT 150");$q->execute([$fid]);$communications=$q->fetchAll();
+ $q=$pdo->prepare("SELECT c.id,c.field_visit_id,c.branding_score,c.pricing_score,c.pos_usage_score,c.stock_handling_score,c.customer_service_score,c.overall_score,c.status,c.findings,c.corrective_action,c.corrective_due_at,c.resolved_at,u.name checked_by_name,c.checked_at FROM outlet_compliance_checks c LEFT JOIN users u ON u.id=c.checked_by WHERE c.franchise_id=? ORDER BY c.checked_at DESC,c.id DESC LIMIT 100");$q->execute([$fid]);$compliance=$q->fetchAll();
+ $q=$pdo->prepare("SELECT m.id,m.campaign_code,m.campaign_name,m.status,m.priority,m.assigned_user_id,u.name assigned_to,m.due_at,m.escalation_level,m.escalated_at,m.start_date,m.end_date,m.assets_ready,m.execution_verified,m.sales_before,m.sales_during,m.notes,m.updated_at,
+   CASE WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<NOW() THEN 'overdue' WHEN m.status NOT IN('completed','not_participating') AND m.due_at IS NOT NULL AND m.due_at<=DATE_ADD(NOW(),INTERVAL 24 HOUR) THEN 'due_soon' ELSE 'on_time' END sla_status
+   FROM marketing_executions m LEFT JOIN users u ON u.id=m.assigned_user_id WHERE m.franchise_id=? ORDER BY m.due_at,m.id DESC LIMIT 100");$q->execute([$fid]);$marketing=$q->fetchAll();
+
  $events=[];
  $q=$pdo->prepare("SELECT occurred_at,event_type,title,detail,reference_type,reference_id FROM outlet_timeline WHERE franchise_id=? ORDER BY occurred_at DESC,id DESC LIMIT 150");$q->execute([$fid]);
  foreach($q->fetchAll() as $e)$events[]=$e;
@@ -832,6 +846,7 @@ if($route==='franchise.360'){
  out(['ok'=>true,'franchise'=>$fr,'profile'=>$profile,'pipeline'=>$pipeline,
   'checklists'=>['opening'=>$opening,'closure'=>$closure,'opening_progress'=>count($opening)?round($openingDone/count($opening)*100):0,'closure_progress'=>count($closure)?round($closureDone/count($closure)*100):0],
   'staff'=>$staff,'training'=>$training,'documents'=>$documents,'health_history'=>$health,'health_latest'=>$health[0]??null,
+  'operations'=>['tasks'=>$opsTasks,'visits'=>$visits,'tickets'=>$tickets,'communications'=>$communications,'compliance'=>$compliance,'marketing'=>$marketing],
   'sales'=>$sales,'stock'=>$stock,'stock_value'=>round($stockValue,2),'settlements'=>$settlements,'timeline'=>array_slice($events,0,250)]);
 }
 
