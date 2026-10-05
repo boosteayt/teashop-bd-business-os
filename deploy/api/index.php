@@ -487,7 +487,7 @@ if($route==='operations.intelligence'){
    ORDER BY age_days DESC,ABS(s.net_payable) DESC")->fetchAll();
  $aging=['current'=>0.0,'d1_7'=>0.0,'d8_15'=>0.0,'d16_30'=>0.0,'d30_plus'=>0.0,'company_receivable'=>0.0,'franchise_payable'=>0.0];
  foreach($settlements as &$r){
-  $age=(int)$r['age_days'];$amt=abs((float)$r['net_payable']);$r['direction']=(float)$r['net_payable']>=0?'franchise_payable':'company_receivable';
+  $age=(int)$r['age_days'];$amt=abs((float)$r['net_payable']);$r['direction']=(float)$r['net_payable']>=0?'company_receivable':'franchise_payable';
   $r['aging_bucket']=$age===0?'current':($age<=7?'1-7':($age<=15?'8-15':($age<=30?'16-30':'30+')));
   if($age===0)$aging['current']+=$amt;elseif($age<=7)$aging['d1_7']+=$amt;elseif($age<=15)$aging['d8_15']+=$amt;elseif($age<=30)$aging['d16_30']+=$amt;else$aging['d30_plus']+=$amt;
   $aging[$r['direction']]+=$amt;
@@ -510,10 +510,11 @@ if($route==='operations.intelligence'){
    'health'=>$o['health'],'health_score'=>(float)$o['health_score'],'inventory_score'=>$invScore,'settlement_score'=>$settleScore,'healthy_business_score'=>$healthy];
  }
  usort($rank,fn($a,$b)=>$b['healthy_business_score']<=>$a['healthy_business_score']);
- $top=array_slice($rank,0,10);$bottom=array_slice(array_reverse($rank),0,10);
+ $liveRank=array_values(array_filter($rank,fn($r)=>in_array($r['status'],['active','watch','critical'],true)));
+ $top=array_slice($liveRank,0,10);$bottom=array_slice(array_reverse($liveRank),0,10);
 
  out(['ok'=>true,'period'=>['month_start'=>$monthStart,'today'=>$today],
-  'summary'=>['inventory'=>$summary,'no_sale_3d'=>count(array_filter($rank,fn($r)=>$r['inactive_days']>=3)),'no_sale_7d'=>count(array_filter($rank,fn($r)=>$r['inactive_days']>=7)),'open_settlements'=>count($settlements)],
+  'summary'=>['inventory'=>$summary,'no_sale_3d'=>count(array_filter($liveRank,fn($r)=>$r['inactive_days']>=3)),'no_sale_7d'=>count(array_filter($liveRank,fn($r)=>$r['inactive_days']>=7)),'open_settlements'=>count($settlements)],
   'outlets'=>$rank,'inventory'=>$inventory,'settlements'=>$settlements,'aging'=>$aging,'top'=>$top,'bottom'=>$bottom]);
 }
 
