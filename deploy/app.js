@@ -541,25 +541,126 @@ function QCWastage(){
 
 
 
+
+function OperationsRound1View({mode,data,onRefresh,user}){
+ const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
+ const outlets=data.outlets||[],assignees=data.assignees||[];
+ const[checkin,setCheckin]=React.useState({franchise_id:'',checkin_date:new Date().toISOString().slice(0,10),opening_status:'on_time',opened_at:'',closing_status:'pending',closed_at:'',opening_photo_ref:'',closing_photo_ref:'',manager_note:''});
+ const[visit,setVisit]=React.useState({franchise_id:'',visit_type:'routine',scheduled_at:'',visitor_user_id:''});
+ const[contract,setContract]=React.useState({id:0,franchise_id:'',contract_type:'lease',document_no:'',start_date:'',expiry_date:'',renewal_status:'active',reminder_days:30,evidence_ref:'',owner_note:''});
+ async function act(fn,success){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ function outletSelect(value,onChange,label='Outlet'){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},h('option',{value:''},'Select outlet'),outlets.map(x=>h('option',{key:x.id,value:x.id},x.code+' · '+x.name))))}
+ function assigneeSelect(value,onChange){return h('label',{className:'field'},'Visitor',h('select',{value,onChange:e=>onChange(e.target.value)},h('option',{value:''},'Current Operations user'),assignees.map(x=>h('option',{key:x.id,value:x.id},x.name+' · '+x.role))))}
+ function sel(label,value,onChange,items){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},items.map(x=>h('option',{key:x,value:x},x.replaceAll('_',' ')))))}
+ const m=data.metrics||{};
+ const stats=h('div',{className:'stats opsV2Stats'},
+  h(Card,{t:'Check-ins today',v:String(m.checkins_today||0),s:String(m.missing_checkins||0)+' missing'}),
+  h(Card,{t:'Visits · next 7d',v:String(m.visits_next_7d||0),s:String(m.overdue_visits||0)+' overdue'}),
+  h(Card,{t:'Renewals due',v:String(m.renewals_due||0),s:'Contract / licence watch'}),
+  h(Card,{t:'Launch rooms',v:String(m.launch_outlets||0),s:String(m.launch_ready||0)+' launch ready'})
+ );
+ let body=null;
+
+ if(mode==='commandv2'){
+  const urgentCheckins=(data.checkins||[]).filter(x=>x.checkin_health!=='recorded').slice(0,12);
+  const dueContracts=(data.contracts||[]).filter(x=>['expired','critical','due'].includes(x.renewal_health)).slice(0,12);
+  const blocked=(data.launches||[]).filter(x=>x.readiness_state!=='launch_ready').slice(0,12);
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Regional command center',tag:'DIVISION → DISTRICT → UPAZILA'}),
+    h(DataTable,{rows:data.regional||[],cols:[['division','Division'],['district','District'],['upazila','Upazila'],['total_outlets','Outlets'],['active_outlets','Active'],['pipeline_outlets','Pipeline'],['attention_outlets','Attention'],['sales_30d','30d sales',money],['open_alerts','Alerts'],['overdue_tasks','Overdue tasks']],empty:'No regional outlet data yet.'})
+   ),
+   h('div',{className:'threecol opsV2Grid'},
+    h('section',{className:'panel'},h(Title,{t:'Daily check-in exceptions',tag:'TODAY'}),h(DataTable,{rows:urgentCheckins,cols:[['outlet_code','Code'],['outlet','Outlet'],['district','District'],['opening_status','Opening'],['checkin_health','State']],empty:'All expected outlets have clean check-ins.'})),
+    h('section',{className:'panel'},h(Title,{t:'Renewal watch',tag:'EXPIRY'}),h(DataTable,{rows:dueContracts,cols:[['outlet','Outlet'],['contract_type','Type'],['expiry_date','Expiry'],['days_to_expiry','Days'],['renewal_health','State']],empty:'No contracts are inside reminder windows.'})),
+    h('section',{className:'panel'},h(Title,{t:'Launch blockers',tag:'WAR ROOM'}),h(DataTable,{rows:blocked,cols:[['outlet_code','Code'],['outlet','Outlet'],['stage','Stage'],['readiness_score','Ready %'],['blockers','Blockers']],empty:'No blocked launch rooms.'}))
+   )
+  );
+ }else if(mode==='dailycheckin'){
+  async function saveCheckin(){if(!checkin.franchise_id)return;await act(()=>api('operations.checkin.save',{method:'POST',body:{...checkin,franchise_id:Number(checkin.franchise_id),opened_at:checkin.opened_at||null,closed_at:checkin.closed_at||null}}),'Daily check-in saved')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Daily outlet check-in',tag:'OPEN / CLOSE + EVIDENCE'}),
+    h('div',{className:'formgrid opsV2Form'},
+     outletSelect(checkin.franchise_id,v=>setCheckin({...checkin,franchise_id:v})),
+     h(Field,{label:'Date',type:'date',value:checkin.checkin_date,onChange:v=>setCheckin({...checkin,checkin_date:v})}),
+     sel('Opening status',checkin.opening_status,v=>setCheckin({...checkin,opening_status:v}),['pending','on_time','late','closed_for_day','exception']),
+     h(Field,{label:'Opened at',type:'datetime-local',value:checkin.opened_at,onChange:v=>setCheckin({...checkin,opened_at:v})}),
+     sel('Closing status',checkin.closing_status,v=>setCheckin({...checkin,closing_status:v}),['pending','on_time','late','exception']),
+     h(Field,{label:'Closed at',type:'datetime-local',value:checkin.closed_at,onChange:v=>setCheckin({...checkin,closed_at:v})}),
+     h(Field,{label:'Opening photo / evidence ref',value:checkin.opening_photo_ref,onChange:v=>setCheckin({...checkin,opening_photo_ref:v})}),
+     h(Field,{label:'Closing photo / evidence ref',value:checkin.closing_photo_ref,onChange:v=>setCheckin({...checkin,closing_photo_ref:v})}),
+     h(Field,{label:'Manager note',value:checkin.manager_note,onChange:v=>setCheckin({...checkin,manager_note:v})})
+    ),
+    h('button',{className:'primary fit',disabled:busy||!checkin.franchise_id,onClick:saveCheckin},busy?'Saving…':'Save check-in')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Today’s outlet status',tag:'LIVE'}),
+    h(DataTable,{rows:data.checkins||[],cols:[['outlet_code','Code'],['outlet','Outlet'],['division','Division'],['district','District'],['opening_status','Opening'],['opened_at','Opened'],['closing_status','Closing'],['closed_at','Closed'],['checkin_health','State'],['manager_note','Note']],empty:'No outlets currently require a daily check-in.'})
+   )
+  );
+ }else if(mode==='visitplanner'){
+  async function schedule(){if(!visit.franchise_id||!visit.scheduled_at)return;await act(async()=>{await api('operations.visit.save',{method:'POST',body:{franchise_id:Number(visit.franchise_id),visit_type:visit.visit_type,status:'scheduled',scheduled_at:visit.scheduled_at,visitor_user_id:visit.visitor_user_id?Number(visit.visitor_user_id):null}});setVisit({franchise_id:'',visit_type:'routine',scheduled_at:'',visitor_user_id:''})},'Field visit scheduled')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Field visit planner',tag:'ROUTE & FOLLOW-UP'}),
+    h('div',{className:'formgrid opsV2Form'},outletSelect(visit.franchise_id,v=>setVisit({...visit,franchise_id:v})),sel('Visit type',visit.visit_type,v=>setVisit({...visit,visit_type:v}),['routine','launch','compliance','support','stock','training','settlement']),h(Field,{label:'Schedule',type:'datetime-local',value:visit.scheduled_at,onChange:v=>setVisit({...visit,scheduled_at:v})}),assigneeSelect(visit.visitor_user_id,v=>setVisit({...visit,visitor_user_id:v}))),
+    h('button',{className:'primary fit',disabled:busy||!visit.franchise_id||!visit.scheduled_at,onClick:schedule},busy?'Scheduling…':'Schedule visit')
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Visit calendar / priority queue',tag:'30-DAY VIEW'}),
+    h(DataTable,{rows:data.visits||[],cols:[['planner_status','Priority'],['scheduled_at','Scheduled'],['outlet_code','Code'],['outlet','Outlet'],['division','Division'],['district','District'],['visit_type','Type'],['visitor','Visitor'],['status','Status'],['overall_score','Last score'],['next_visit_at','Next']],empty:'No field visits are scheduled.'})
+   )
+  );
+ }else if(mode==='renewals'){
+  async function saveContract(){if(!contract.franchise_id)return;await act(async()=>{await api('operations.contract.save',{method:'POST',body:{...contract,id:Number(contract.id||0),franchise_id:Number(contract.franchise_id),reminder_days:Number(contract.reminder_days||30),start_date:contract.start_date||null,expiry_date:contract.expiry_date||null}});setContract({...contract,id:0,document_no:'',start_date:'',expiry_date:'',evidence_ref:'',owner_note:''})},'Contract / renewal saved')}
+  function edit(r){setContract({id:r.id,franchise_id:r.franchise_id,contract_type:r.contract_type,document_no:r.document_no||'',start_date:r.start_date||'',expiry_date:r.expiry_date||'',renewal_status:r.renewal_status||'active',reminder_days:r.reminder_days||30,evidence_ref:r.evidence_ref||'',owner_note:r.owner_note||''});window.scrollTo({top:0,behavior:'smooth'})}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Contract & renewal control',tag:'AGREEMENT / LEASE / LICENCE'}),
+    h('div',{className:'formgrid opsV2Form'},
+     outletSelect(contract.franchise_id,v=>setContract({...contract,franchise_id:v})),
+     sel('Type',contract.contract_type,v=>setContract({...contract,contract_type:v}),['franchise_agreement','lease','trade_license','food_license','fire_safety','tax_vat','other']),
+     h(Field,{label:'Document no.',value:contract.document_no,onChange:v=>setContract({...contract,document_no:v})}),
+     h(Field,{label:'Start date',type:'date',value:contract.start_date,onChange:v=>setContract({...contract,start_date:v})}),
+     h(Field,{label:'Expiry date',type:'date',value:contract.expiry_date,onChange:v=>setContract({...contract,expiry_date:v})}),
+     h(Field,{label:'Reminder days',type:'number',value:contract.reminder_days,onChange:v=>setContract({...contract,reminder_days:v})}),
+     sel('Renewal status',contract.renewal_status,v=>setContract({...contract,renewal_status:v}),['active','due','renewing','renewed','expired','not_required']),
+     h(Field,{label:'Evidence / document ref',value:contract.evidence_ref,onChange:v=>setContract({...contract,evidence_ref:v})}),
+     h(Field,{label:'Operations note',value:contract.owner_note,onChange:v=>setContract({...contract,owner_note:v})})
+    ),
+    h('button',{className:'primary fit',disabled:busy||!contract.franchise_id,onClick:saveContract},busy?'Saving…':(contract.id?'Update renewal':'Add contract / renewal'))
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Renewal calendar',tag:'AUTO ALERT'}),
+    h(DataTable,{rows:data.contracts||[],cols:[['renewal_health','Health'],['outlet_code','Code'],['outlet','Outlet'],['contract_type','Type'],['document_no','Document'],['expiry_date','Expiry'],['days_to_expiry','Days'],['renewal_status','Status'],['reminder_days','Reminder'],['actions','Action',(_,r)=>h('button',{className:'miniBtn',onClick:()=>edit(r)},'Edit')]],empty:'No contracts / renewal records yet.'})
+   )
+  );
+ }else{
+  async function blockerTask(r){await act(()=>api('operations.task.create',{method:'POST',body:{franchise_id:Number(r.franchise_id),task_type:'launch',title:'Launch blocker · '+r.outlet,detail:r.blockers||'Complete outlet launch readiness',priority:r.readiness_score<50?'high':'medium',due_at:null}}),'Launch blocker task created')}
+  body=h(React.Fragment,null,stats,
+   h('section',{className:'panel'},h(Title,{t:'Outlet Launch War Room',tag:'READINESS GATE'}),
+    h('p',{className:'muted'},'Readiness = opening checklist 70% + staff 10% + training 10% + documents 5% + opening stock 5%. Existing Live gate remains authoritative: required opening checklist must be 100%.'),
+    h(DataTable,{rows:data.launches||[],cols:[['readiness_state','State'],['outlet_code','Code'],['outlet','Outlet'],['division','Division'],['district','District'],['stage','Stage'],['target_open_date','Target'],['opening_progress','Checklist %'],['staff_count','Staff'],['training_complete','Training'],['document_count','Docs'],['stock_value','Stock',money],['readiness_score','Ready %'],['blockers','Blockers'],['next_action','Next action'],['actions','Action',(_,r)=>h('button',{className:'miniBtn',disabled:busy,onClick:()=>blockerTask(r)},'Create blocker task')]],empty:'No outlets are currently in launch pipeline.'})
+   )
+  );
+ }
+ return h(React.Fragment,null,msg?h('div',{className:'notice'},h('b',null,'Operations V2'),h('span',null,msg)):null,body);
+}
+
 function OperationsWorkspace({user}){
- const[data,setData]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[alerts,setAlerts]=React.useState(null),[perf,setPerf]=React.useState(null),[perfHistory,setPerfHistory]=React.useState([]),[report,setReport]=React.useState(null),[security,setSecurity]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('network'),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7));
+ const[data,setData]=React.useState(null),[round1,setRound1]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[alerts,setAlerts]=React.useState(null),[perf,setPerf]=React.useState(null),[perfHistory,setPerfHistory]=React.useState([]),[report,setReport]=React.useState(null),[security,setSecurity]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('commandv2'),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7));
  async function load(){
   try{
    await api('operations.alerts.refresh',{method:'POST',body:{}});
-   const[a,b,c,d,e,f,g,h]=await Promise.all([
+   const[a,b,c,d,e,f,g,h,i]=await Promise.all([
     api('operations.dashboard'),api('franchise.territory'),api('operations.workboard'),api('operations.intelligence'),
-    api('operations.alerts'),api('operations.performance.preview?period='+encodeURIComponent(period)),api('operations.performance.history'),api('operations.network.report?period='+encodeURIComponent(period))
+    api('operations.alerts'),api('operations.performance.preview?period='+encodeURIComponent(period)),api('operations.performance.history'),api('operations.network.report?period='+encodeURIComponent(period)),api('operations.round1')
    ]);
-   setData(a);setTerritory(b);setWork(c);setIntel(d);setAlerts(e);setPerf(f.preview||null);setPerfHistory(g.records||[]);setReport(h);
+   setData(a);setTerritory(b);setWork(c);setIntel(d);setAlerts(e);setPerf(f.preview||null);setPerfHistory(g.records||[]);setReport(h);setRound1(i);
    if(['OWNER','OPERATIONS'].includes(user.role)){try{setSecurity(await api('operations.security.audit'))}catch{}}
   }catch(e){setMsg('Operations data could not be loaded: '+(e.code||'ERROR'))}
  }
  React.useEffect(()=>{load()},[period]);
- if(!data||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
+ if(!data||!round1||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
+ const tabs=[['commandv2','Regional Command'],['dailycheckin','Daily Check-in'],['visitplanner','Visit Planner'],['renewals','Renewals'],['launchwar','Launch War Room'],['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['performance','Performance'],['security','Control Audit']]:[]);
  let body=null;
- if(tab==='network'){
+ if(['commandv2','dailycheckin','visitplanner','renewals','launchwar'].includes(tab))body=h(OperationsRound1View,{mode:tab,data:round1,onRefresh:load,user});
+ else if(tab==='network'){
   body=h(React.Fragment,null,
    h('div',{className:'stats'},
     h(Card,{t:'Active outlets',v:String(n.active_outlets||0),s:String(n.total_outlets||0)+' total open records'}),
@@ -575,7 +676,7 @@ function OperationsWorkspace({user}){
  else if(['alerts','performance','reports','security'].includes(tab))body=h(OperationsPatch4View,{mode:tab,alerts,perf,perfHistory,report,security,period,setPeriod,onRefresh:load,user});
  else body=h(OperationsPatch2View,{mode:tab,work,onRefresh:load,user});
  return h(React.Fragment,null,
-  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS · FINAL'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Full 150-outlet command center: execution, intelligence, alerts, escalation, performance scorecard, regional reporting and locked authority boundaries.')),
+  h('section',{className:'moduleHead'},h('small',null,'OPERATIONS COMMAND CENTER V2 · ROUND 1'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Regional command, daily outlet check-in, field visit planning, renewal alerts and launch readiness—on top of the existing Operations intelligence and control gates.')),
   msg?h('div',{className:'authError'},msg):null,
   h('div',{className:'opsTabs'},tabs.map(([k,l])=>h('button',{key:k,className:tab===k?'active':'',onClick:()=>setTab(k)},l))),
   body
