@@ -881,7 +881,7 @@ if($route==='operations.target.save' && $method==='POST'){
   }
 
   $phase='timeline';
-  outlet_timeline($pdo,$fid,(int)$u['id'],'sales_target','Sales target set',$start.' → '.$end.' · '.number_format($target,2),'sales_target',$id,['sales_target'=>$target,'receipt_target'=>$receipts]);
+  outlet_timeline($pdo,$fid,(int)$u['id'],'sales_target','Sales target set',$start.' to '.$end.' | '.number_format($target,2),'sales_target',null,['sales_target'=>$target,'receipt_target'=>$receipts]);
 
   $phase='audit';
   audit($pdo,(int)$u['id'],'target_save','franchise',(string)$fid,['target_id'=>$id,'period_start'=>$start,'period_end'=>$end,'sales_target'=>$target,'receipt_target'=>$receipts]);
