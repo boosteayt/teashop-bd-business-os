@@ -671,3 +671,15 @@ td b{font-size:9.5px}
 .regionHeat small,.regionHeat span,.regionHeat em{display:block}.regionHeat small{font-size:7.5px;color:#7b8f84;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.regionHeat b{display:block;font-size:12px;color:#17392a;margin:7px 0 5px}.regionHeat span{font-size:8px;color:#657b70}.regionHeat em{font-style:normal;font-size:8px;color:#2c6a50;margin-top:7px}
 @media(max-width:1180px){.regionHeat{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.regionHeat{grid-template-columns:1fr}}
+
+
+/* operations-v2-round2 */
+.opsV2Round2Stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+.opsV2Round2Stats .card{min-height:104px}
+.opsTabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.opsTabs button{border:1px solid var(--line);background:#fff;color:#66746c;border-radius:9px;padding:8px 10px;font-size:10px;font-weight:700;cursor:pointer}
+.opsTabs button.active{background:var(--brand-soft);border-color:#cfe4d7;color:var(--brand)}
+.opsV2Form{grid-template-columns:repeat(4,minmax(0,1fr))}
+.opsV2Grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:1100px){.opsV2Round2Stats{grid-template-columns:repeat(2,1fr)}.opsV2Form{grid-template-columns:repeat(2,1fr)}.opsV2Grid{grid-template-columns:1fr 1fr}}
+@media(max-width:720px){.opsV2Round2Stats,.opsV2Form,.opsV2Grid{grid-template-columns:1fr}.opsTabs{overflow:auto;flex-wrap:nowrap;padding-bottom:4px}.opsTabs button{white-space:nowrap}}
