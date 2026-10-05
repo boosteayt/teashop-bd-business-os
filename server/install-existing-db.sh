@@ -62,19 +62,25 @@ echo "Loading business rules..."
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/seed_core.sql"
 echo "Loading 99-SKU tea master..."
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/seed_products.sql"
+mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_business_os_full_roles_modules.sql"
 echo "Creating first-login users..."
 "$PHPCLI" <<'PHPBOOT'
 <?php
 $config=require getenv('HOME').'/teashop-os-config.php';
 $pdo=new PDO($config['dsn'],$config['user'],$config['pass'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
 $users=[
- ['OWNER','Shahidur Rahman','owner@teashop.bd'],
- ['OPERATIONS','Md. Omar Faruk','faruk@teashop.bd'],
- ['FINANCE','Finance Manager','finance@teashop.bd'],
- ['WAREHOUSE','Warehouse Manager','warehouse@teashop.bd'],
+ ['OWNER','Owner / Super Admin','owner@teashop.bd'],
+ ['OPERATIONS','Franchise & Retail Operations','operations@teashop.bd'],
+ ['FINANCE','Finance & Accounts','finance@teashop.bd'],
+ ['WAREHOUSE','Warehouse & Inventory','warehouse@teashop.bd'],
+ ['PRODUCTION','Production & Blending','production@teashop.bd'],
+ ['QC','Quality Control','qc@teashop.bd'],
+ ['PACKAGING','Packaging','packaging@teashop.bd'],
  ['REGIONAL','Regional Manager','regional@teashop.bd'],
  ['FRANCHISE','Franchise Owner','franchise@teashop.bd'],
- ['CASHIER','POS Cashier','cashier@teashop.bd'],
+ ['OUTLET_MANAGER','Outlet Manager','manager@teashop.bd'],
+ ['CASHIER','POS / Cashier','cashier@teashop.bd'],
+ ['AUDITOR','Auditor / Read Only','auditor@teashop.bd'],
 ];
 $out="Tea Shop BD Business OS — FIRST LOGIN CREDENTIALS\nGenerated: ".date('c')."\n\n";
 foreach($users as [$role,$name,$email]){

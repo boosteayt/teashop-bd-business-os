@@ -527,3 +527,50 @@ td b{font-size:9.5px}
   .moduleHead p{font-size:9px;margin-top:2px}
   .hero{padding:14px}
 }
+
+
+/* tea-lifecycle-v12 */
+/* Tea is the primary lifecycle hub: dense master on the left, traceable history on the right. */
+.teaToolbar{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,260px) auto;gap:8px;align-items:end;margin-bottom:8px}
+.teaLayout{display:grid;grid-template-columns:minmax(520px,1.2fr) minmax(390px,.8fr);gap:9px;align-items:start}
+.teaMaster,.teaDetail{min-width:0}
+.teaMaster .tablewrap{max-height:calc(100vh - 190px);overflow:auto}
+.teaMaster tbody tr{cursor:pointer}
+.teaMaster tbody tr.selectedRow{background:#eef7f2}
+.teaMaster tbody tr.selectedRow td:first-child{box-shadow:inset 2px 0 0 #147047}
+.teaLink{border:0;background:transparent;padding:0;color:#165f40;font-size:inherit;font-weight:700;cursor:pointer;text-align:left}
+.teaLink:hover{text-decoration:underline}
+.teaDetail{position:sticky;top:56px;max-height:calc(100vh - 68px);overflow:auto}
+.miniMetrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:8px}
+.miniMetrics>div{border:1px solid #e5ebe8;background:#f9fbfa;border-radius:8px;padding:9px}
+.miniMetrics span,.miniMetrics b{display:block}
+.miniMetrics span{font-size:7.5px;color:#849089;text-transform:uppercase;letter-spacing:.05em}
+.miniMetrics b{font-size:13px;color:#1c2a22;margin-top:4px}
+.historyFlow{padding:8px 9px;border:1px solid #e6dfc8;background:#fffaf0;color:#6e592c;border-radius:8px;font-size:8.5px;line-height:1.45;margin-bottom:8px}
+.compactTable{margin-bottom:8px;border:1px solid #edf1ef;border-radius:8px;overflow:auto}
+.compactTable table{min-width:0}
+.timeline{display:flex;flex-direction:column}
+.timelineRow{position:relative;display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:8px;padding:9px 0;border-bottom:1px solid #eef1ef}
+.timelineRow:last-child{border-bottom:0}
+.timelineRow>i{width:7px;height:7px;margin-top:4px;border-radius:50%;background:#c9a653;box-shadow:0 0 0 3px #fbf4df}
+.timelineRow span,.timelineRow b,.timelineRow p{display:block}
+.timelineRow span{font-size:7.5px;color:#8a958f;text-transform:uppercase;letter-spacing:.035em}
+.timelineRow b{font-size:9.5px;color:#243229;margin:2px 0}
+.timelineRow p{margin:0;font-size:8.5px;color:#69756f;line-height:1.35}
+.timelineRow strong{font-size:9px;color:#1f3c2e;white-space:nowrap}
+.hubTabs{display:flex;gap:5px;padding:0 0 8px;border-bottom:1px solid #e7ebe9;margin-bottom:8px}
+.hubTabs button{border:1px solid #e0e6e3;background:#fff;color:#65736b;border-radius:7px;padding:7px 10px;font-size:9px;font-weight:700;cursor:pointer}
+.hubTabs button.active{background:#123b2a;border-color:#123b2a;color:#fff}
+.sidebarMetric{font-variant-numeric:tabular-nums}
+@media(max-width:1180px){
+ .teaLayout{grid-template-columns:1fr}
+ .teaDetail{position:relative;top:auto;max-height:none}
+ .teaMaster .tablewrap{max-height:520px}
+}
+@media(max-width:760px){
+ .teaToolbar{grid-template-columns:1fr}
+ .miniMetrics{grid-template-columns:1fr}
+ .teaMaster .tablewrap{max-height:440px}
+ .timelineRow{grid-template-columns:12px minmax(0,1fr)}
+ .timelineRow>strong{grid-column:2}
+}

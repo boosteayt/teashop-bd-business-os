@@ -1,15 +1,20 @@
 window.TSB_DATA={
 users:[
-{name:"Shahidur Rahman",email:"owner@teashop.bd",role:"OWNER",label:"Founder / Owner / CEO"},
-{name:"Md. Omar Faruk",email:"faruk@teashop.bd",role:"OPERATIONS",label:"Head of Franchise & Retail Operations"},
-{name:"Finance Manager",email:"finance@teashop.bd",role:"FINANCE",label:"Finance & Accounts"},
-{name:"Warehouse Manager",email:"warehouse@teashop.bd",role:"WAREHOUSE",label:"Warehouse & Inventory"},
+{name:"Owner / Super Admin",email:"owner@teashop.bd",role:"OWNER",label:"Founder / Owner / CEO"},
+{name:"Franchise & Retail Operations",email:"operations@teashop.bd",role:"OPERATIONS",label:"Franchise & Retail Operations"},
+{name:"Finance & Accounts",email:"finance@teashop.bd",role:"FINANCE",label:"Finance & Accounts"},
+{name:"Warehouse & Inventory",email:"warehouse@teashop.bd",role:"WAREHOUSE",label:"Warehouse & Inventory"},
+{name:"Production & Blending",email:"production@teashop.bd",role:"PRODUCTION",label:"Production & Blending"},
+{name:"Quality Control",email:"qc@teashop.bd",role:"QC",label:"Quality Control"},
+{name:"Packaging",email:"packaging@teashop.bd",role:"PACKAGING",label:"Packaging"},
 {name:"Regional Manager",email:"regional@teashop.bd",role:"REGIONAL",label:"Regional Operations"},
 {name:"Franchise Owner",email:"franchise@teashop.bd",role:"FRANCHISE",label:"Franchise Owner"},
-{name:"POS Cashier",email:"cashier@teashop.bd",role:"CASHIER",label:"POS / Cashier"}
+{name:"Outlet Manager",email:"manager@teashop.bd",role:"OUTLET_MANAGER",label:"Outlet Manager"},
+{name:"POS / Cashier",email:"cashier@teashop.bd",role:"CASHIER",label:"POS / Cashier"},
+{name:"Auditor / Read Only",email:"auditor@teashop.bd",role:"AUDITOR",label:"Auditor / Read Only"}
 ],
 marginTiers:{Starter:25,Growth:27,Elite:30,Manual:30},
-farukTiers:{Base:15,Growth:20,Elite:25,Manual:20},
+performanceShareTiers:{Base:15,Growth:20,Elite:25,Manual:20},
 assumptions:{tube30:60,pouch50:18,pouch100:22,ctc250:24,ctc500:28,labour:5,overhead:7,wastagePct:3,logistics:4,taxProvisionPct:0},
 products:[
 ["CTC / Black Tea","Royal Gold",450],["CTC / Black Tea","Grand Reserve",400],["CTC / Black Tea","Bold Reserve",400],["CTC / Black Tea","Classic Blend",370],["CTC / Black Tea","Golden Cup",360],["CTC / Black Tea","Prime Select",350],["CTC / Black Tea","Imperial Blend",350],["CTC / Black Tea","Heritage Gold",400],["CTC / Black Tea","Signature Blend",400],["CTC / Black Tea","Supreme Gold",400],["CTC / Black Tea","Premium Blend Tea",380],["CTC / Black Tea","Clone Tea",370],["CTC / Black Tea","BT-2 Tea",350],["CTC / Black Tea","Tea Gold Tea",350],["CTC / Black Tea","Golden Tea",350],["CTC / Black Tea","Premium CTC Luxury Tea",600],

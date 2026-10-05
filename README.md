@@ -1,56 +1,113 @@
 # Tea Shop BD Business OS
 
-Founder-controlled franchise, retail, production, inventory, POS and finance operating system.
+Tea-centric operating system for Tea Shop BD procurement, blending, quality, packaging, inventory, franchise retail, POS, settlement and finance.
 
-## Production
+## Production boundaries
 - Live domain: `https://teashop.bd`
 - cPanel repository: `/home/teashopc/repositories/teashop-bd-business-os`
 - Live document root: `/home/teashopc/teashop.bd`
 - Existing ecommerce `teashop.com.bd` is a separate system and must remain untouched.
 
+## Core business chain
+```
+Tea purchase
+  -> raw tea stock / lot
+  -> blend & production batch
+  -> QC / wastage / yield
+  -> packaging / finished SKU
+  -> central warehouse
+  -> outlet transfer
+  -> verified POS sale
+  -> 25% / 27% / 30% or approved custom franchise margin
+  -> monthly settlement
+  -> Finance / P&L
+  -> role-based performance share
+  -> Tea Shop BD net
+```
+
+Stock received does not create franchise profit. Franchise margin is earned only on verified eligible POS sales.
+
+## Tea master
+The `Tea` workspace is the lifecycle hub. The authoritative 99 Tea Shop BD tea names and purchase-cost baseline live in `database/seed_products.sql`.
+
+Opening a tea can trace:
+- master/category/current purchase-cost baseline
+- packs/SKUs and MRP
+- purchase history
+- blend / production batch and components
+- QC / wastage
+- packaging jobs
+- warehouse/outlet stock movement
+- POS sale history
+- franchise margin context
+- MRP history and lifecycle events
+
+## Role model
+The application uses role names rather than personal names:
+- Founder / Owner / CEO
+- Franchise & Retail Operations
+- Finance & Accounts
+- Warehouse & Inventory
+- Production & Blending
+- Quality Control
+- Packaging
+- Regional Operations
+- Franchise Owner
+- Outlet Manager
+- POS / Cashier
+- Auditor / Read Only
+
+Manufacturing, sourcing, pricing-policy and other restricted controls remain Founder-controlled. Access to an operational module does not imply ownership.
+
+## Main workspaces
+Dashboard, Tea, Purchase & Suppliers, Blending & Production, QC & Wastage, Packaging, Products / SKU, Pricing Engine, Inventory / Warehouse, Outlets / Franchise, Franchise & Retail Operations, POS / Sales, Margin & Settlement, Finance & Accounts, Profit & Loss, Performance & Incentives, Customers, Corporate / B2B, Logistics, Reports, Approvals, Documents, Notifications, Users & Roles, Audit Log and Settings.
+
+## Franchise margin
+Standard outlet tiers:
+- Starter: 25%
+- Growth: 27%
+- Elite: 30%
+- Founder-approved custom percentage
+
+The Founder can update an existing outlet's margin. Margin changes are recorded in `franchise_margin_history`.
+
+## Financial control
+Performance share is calculated on positive distributable Franchise Division profit, not MRP, stock issued or gross sales. The policy is stored using role-based management settings rather than a person's identity.
+
+VAT/tax is an editable accounting policy provision; statutory treatment and rates must be confirmed by the company's accountant.
+
 ## Fast deployment model
-The live app uses React 18 UMD from `deploy/`, so cPanel does not need Node/npm and normal deployments do not require GitHub Actions.
+Normal production deployments do not depend on GitHub Actions minutes.
 
 Workflow:
-1. GitHub source commit
-2. cPanel **Update from Remote**
-3. cPanel **Deploy HEAD Commit**
-4. `.cpanel.yml` copies `deploy/` to `/home/teashopc/teashop.bd/`
+1. Commit/push source to GitHub.
+2. cPanel **Update from Remote**.
+3. cPanel **Deploy HEAD Commit**.
+4. `.cpanel.yml` copies `deploy/` to `/home/teashopc/teashop.bd/`.
 
-GitHub Actions is manual-only to avoid consuming build minutes on every commit.
+The GitHub Actions workflow is manual-only.
 
-## Implemented foundation
-- Premium responsive login/dashboard UI
-- Role-scoped navigation: Owner, Omar Faruk Operations, Finance, Warehouse, Regional, Franchise, POS/Cashier
-- Authoritative 99-SKU tea purchase master
-- A–Z pricing engine with editable packaging/labour/wastage/overhead/logistics assumptions
-- CTC and non-CTC pack rules
-- Franchise 25% / 27% / 30% / Founder manual override
-- Omar Faruk Base 15% / Growth 20% / Elite 25% / Owner manual override
-- Purchase & Raw Tea workflow
-- Production / QC / wastage workflow
-- Packaging & Rebuild workflow
-- Inventory summary
-- Franchise onboarding
-- POS verified-sale workflow
-- Settlement summary
-- Finance/P&L and Faruk performance-share calculation
-- Reports and role/access UI
-- PWA/offline app-shell support
-- MySQL production schema
-- PHP same-origin API foundation with secure sessions, CSRF and audit logging
-- One-time secure user bootstrap mechanism
+## Backend
+Production uses the same-origin PHP API at `deploy/api/index.php` with MySQL, PHP sessions, CSRF checks, password hashing and audit logs.
 
-## Security
-Passwords, database credentials and setup tokens are never committed to this public repository.
-Production database configuration is loaded from:
+Production database configuration lives outside the repository:
 `/home/teashopc/teashop-os-config.php`
 
-See `server/teashop-os-config.sample.php`.
+Do not commit database credentials or first-login passwords.
 
-## Business rules
-- Stock received is full account/MRP value.
-- Franchise profit is earned only on verified eligible POS sales.
-- Standard franchise tiers: 25%, 27%, 30%, with Founder-controlled manual override.
-- Omar Faruk performance share is based on positive distributable Franchise Division profit, not MRP, stock issued or gross sales.
-- Manufacturing/sourcing confidentiality remains Founder-controlled.
+## Database
+Base files:
+- `database/schema.sql`
+- `database/seed_core.sql`
+- `database/seed_products.sql`
+
+Current lifecycle migration:
+- `database/migrations/2026_10_05_business_os_full_roles_modules.sql`
+
+The migration adds role/control foundations for QC, wastage, price history, margin history, outlet health, customers, B2B, logistics, approvals, documents, notifications and performance records.
+
+## Secure first-login accounts
+Server-side bootstrap/install scripts create role-based accounts such as:
+`owner@teashop.bd`, `operations@teashop.bd`, `finance@teashop.bd`, `warehouse@teashop.bd`, `production@teashop.bd`, `qc@teashop.bd`, `packaging@teashop.bd`, `regional@teashop.bd`, `franchise@teashop.bd`, `manager@teashop.bd`, `cashier@teashop.bd`, `auditor@teashop.bd`.
+
+Temporary passwords are generated on the server, are not committed to Git, and must be changed after first login.

@@ -38,16 +38,21 @@ try {
 $roles=(int)$pdo->query("SELECT COUNT(*) FROM roles")->fetchColumn();
 $products=(int)$pdo->query("SELECT COUNT(*) FROM products")->fetchColumn();
 $users=(int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
-if($roles!==7 || $products!==99){ fwrite(STDERR,"FOUNDATION_CHECK_FAILED roles={$roles} products={$products}\n"); exit(3); }
+if($roles<12 || $products!==99){ fwrite(STDERR,"FOUNDATION_CHECK_FAILED roles={$roles} products={$products}\n"); exit(3); }
 if($users!==0){ fwrite(STDERR,"ABORT: users table is not empty ({$users}). No changes made.\n"); exit(4); }
 $accounts=[
- ['OWNER','Shahidur Rahman','owner@teashop.bd'],
- ['OPERATIONS','Md. Omar Faruk','faruk@teashop.bd'],
- ['FINANCE','Finance Manager','finance@teashop.bd'],
- ['WAREHOUSE','Warehouse Manager','warehouse@teashop.bd'],
+ ['OWNER','Owner / Super Admin','owner@teashop.bd'],
+ ['OPERATIONS','Franchise & Retail Operations','operations@teashop.bd'],
+ ['FINANCE','Finance & Accounts','finance@teashop.bd'],
+ ['WAREHOUSE','Warehouse & Inventory','warehouse@teashop.bd'],
+ ['PRODUCTION','Production & Blending','production@teashop.bd'],
+ ['QC','Quality Control','qc@teashop.bd'],
+ ['PACKAGING','Packaging','packaging@teashop.bd'],
  ['REGIONAL','Regional Manager','regional@teashop.bd'],
  ['FRANCHISE','Franchise Owner','franchise@teashop.bd'],
- ['CASHIER','POS Cashier','cashier@teashop.bd'],
+ ['OUTLET_MANAGER','Outlet Manager','manager@teashop.bd'],
+ ['CASHIER','POS / Cashier','cashier@teashop.bd'],
+ ['AUDITOR','Auditor / Read Only','auditor@teashop.bd'],
 ];
 $out="Tea Shop BD Business OS — FIRST LOGIN CREDENTIALS\nGenerated: ".date('c')."\nChange every password after first login.\n\n";
 $pdo->beginTransaction();
