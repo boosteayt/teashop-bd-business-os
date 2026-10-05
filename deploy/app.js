@@ -533,13 +533,14 @@ function QCWastage(){
 }
 
 
+
 function OperationsWorkspace({user}){
- const[data,setData]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('network');
- async function load(){try{const[a,b,c]=await Promise.all([api('operations.dashboard'),api('franchise.territory'),api('operations.workboard')]);setData(a);setTerritory(b);setWork(c)}catch(e){setMsg('Operations data could not be loaded: '+(e.code||'ERROR'))}}
+ const[data,setData]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[intel,setIntel]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('network');
+ async function load(){try{const[a,b,c,d]=await Promise.all([api('operations.dashboard'),api('franchise.territory'),api('operations.workboard'),api('operations.intelligence')]);setData(a);setTerritory(b);setWork(c);setIntel(d)}catch(e){setMsg('Operations data could not be loaded: '+(e.code||'ERROR'))}}
  React.useEffect(()=>{load()},[]);
- if(!data||!work)return msg?h('div',{className:'authError'},msg):h(Loading);
+ if(!data||!work||!intel)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications']];
+ const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard']];
  let body=null;
  if(tab==='network'){
   body=h(React.Fragment,null,
@@ -553,13 +554,78 @@ function OperationsWorkspace({user}){
    h('section',{className:'panel'},h(Title,{t:'Territory hierarchy',tag:'DIVISION → DISTRICT → UPAZILA'}),h(DataTable,{rows:territory.territories||[],cols:[['division','Division'],['district','District'],['upazila','Upazila'],['total_outlets','Outlets'],['active_outlets','Active'],['pipeline_outlets','Pipeline'],['attention_outlets','Attention'],['sales_30d','30d sales',money]],empty:'No territory assignments yet. Set Division, District and Upazila from Outlet 360°.'})),
    h('section',{className:'panel'},h(Title,{t:'Outlet operations table',tag:'LIVE'}),h(DataTable,{rows:data.outlets||[],cols:[['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['status','Status'],['margin_percent','Margin %'],['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health'],['last_sale_at','Last sale']],empty:'No outlet records yet.'}))
   );
- }else body=h(OperationsPatch2View,{mode:tab,work,onRefresh:load,user});
+ }else if(['salesintel','stockintel','settlementintel','leaderboard'].includes(tab))body=h(OperationsPatch3View,{mode:tab,intel,onRefresh:load,user});
+ else body=h(OperationsPatch2View,{mode:tab,work,onRefresh:load,user});
  return h(React.Fragment,null,
-  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS · PATCH 2'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Daily task control, field visits, support tickets, communications, compliance, training and marketing execution with SLA and escalation.')),
+  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS · PATCH 3'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Daily execution plus sales targets, stock velocity, reorder intelligence, settlement aging, POS inactivity and healthy-business ranking.')),
   msg?h('div',{className:'authError'},msg):null,
   h('div',{className:'opsTabs'},tabs.map(([k,l])=>h('button',{key:k,className:tab===k?'active':'',onClick:()=>setTab(k)},l))),
   body
  );
+}
+
+function OperationsPatch3View({mode,intel,onRefresh,user}){
+ const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
+ const outlets=intel.outlets||[],inventory=intel.inventory||[],summary=intel.summary||{},aging=intel.aging||{};
+ const[target,setTarget]=React.useState({franchise_id:'',period_start:intel.period?.month_start||'',period_end:'',sales_target:0,receipt_target:0,notes:''});
+ async function act(fn,success){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ function outletSelect(value,onChange){return h('label',{className:'field'},'Outlet',h('select',{value,onChange:e=>onChange(e.target.value)},h('option',{value:''},'Select outlet'),outlets.map(x=>h('option',{key:x.franchise_id,value:x.franchise_id},x.code+' · '+x.outlet))))}
+ async function saveTarget(){if(!target.franchise_id)return;await act(()=>api('operations.target.save',{method:'POST',body:{...target,franchise_id:Number(target.franchise_id),period_end:target.period_end||undefined,sales_target:Number(target.sales_target||0),receipt_target:Number(target.receipt_target||0)}}),'Sales target saved')}
+ async function stockCount(r){const raw=prompt('Physical quantity for '+r.product+' '+r.grams+'g:',String(r.stock_qty));if(raw===null)return;const q=Number(raw);if(!Number.isFinite(q)||q<0){setMsg('Enter a valid physical quantity.');return}await act(()=>api('operations.stock_count.save',{method:'POST',body:{franchise_id:Number(r.franchise_id),product_pack_id:Number(r.product_pack_id),physical_qty:q}}),'Stock count saved')}
+ async function policy(r){const raw=prompt('Days cover policy: min,target,max,dead (example 7,21,60,30)','7,21,60,30');if(raw===null)return;const a=raw.split(',').map(Number);if(a.length!==4||a.some(x=>!Number.isFinite(x))){setMsg('Use min,target,max,dead format.');return}await act(()=>api('operations.inventory_policy.save',{method:'POST',body:{franchise_id:Number(r.franchise_id),product_pack_id:Number(r.product_pack_id),min_days_cover:a[0],target_days_cover:a[1],max_days_cover:a[2],dead_stock_days:a[3]}}),'Inventory policy saved')}
+ const topCards=h('div',{className:'stats'},
+  h(Card,{t:'Low / OOS SKU lines',v:String((summary.inventory?.low||0)+(summary.inventory?.out_of_stock||0)),s:String(summary.inventory?.out_of_stock||0)+' out of stock'}),
+  h(Card,{t:'Overstock / dead',v:String((summary.inventory?.overstock||0)+(summary.inventory?.dead||0)),s:String(summary.inventory?.dead||0)+' dead stock'}),
+  h(Card,{t:'Suggested reorder',v:String(summary.inventory?.reorder_units||0),s:money(summary.inventory?.reorder_value||0)+' at MRP'}),
+  h(Card,{t:'POS inactivity',v:String(summary.no_sale_3d||0),s:String(summary.no_sale_7d||0)+' outlets 7+ days'})
+ );
+ let body=null;
+ if(mode==='salesintel'){
+  body=h(React.Fragment,null,topCards,
+   ['OWNER','OPERATIONS'].includes(user.role)?h('section',{className:'panel'},h(Title,{t:'Set monthly outlet target',tag:'SALES + RECEIPTS'}),h('div',{className:'formrow opsForm'},
+    outletSelect(target.franchise_id,v=>setTarget({...target,franchise_id:v})),
+    h(Field,{label:'Period start',value:target.period_start,onChange:v=>setTarget({...target,period_start:v}),type:'date'}),
+    h(Field,{label:'Period end',value:target.period_end,onChange:v=>setTarget({...target,period_end:v}),type:'date'}),
+    h(Field,{label:'Sales target',value:target.sales_target,onChange:v=>setTarget({...target,sales_target:v}),type:'number'}),
+    h(Field,{label:'Receipt target',value:target.receipt_target,onChange:v=>setTarget({...target,receipt_target:v}),type:'number'}),
+    h(Field,{label:'Notes',value:target.notes,onChange:v=>setTarget({...target,notes:v})}),
+    h('button',{className:'primary fit',disabled:busy,onClick:saveTarget},'Save target')
+   )):null,
+   h(DataTable,{rows:outlets,cols:[['code','Code'],['outlet','Outlet'],['sales_7d','7d sales',money],['sales_30d','30d sales',money],['sales_mtd','MTD sales',money],['sales_target','Target',money],['target_achievement','Achievement',v=>Number(v).toFixed(1)+'%'],['receipts_mtd','Receipts'],['last_sale_at','Last sale'],['pos_status','POS status']],empty:'No outlet sales data yet.'})
+  );
+ }else if(mode==='stockintel'){
+  body=h(React.Fragment,null,topCards,
+   h('section',{className:'panel'},h(Title,{t:'Stock intelligence & reorder suggestions',tag:'7 / 30 DAY VELOCITY'}),h(DataTable,{rows:inventory,cols:[
+    ['product','Product'],['grams','Pack'],['stock_qty','Stock'],['sales_qty_7d','7d sold'],['sales_qty_30d','30d sold'],['daily_velocity','Daily'],['days_cover','Days cover'],['movement_class','Movement'],['stock_status','Stock status'],['suggested_reorder_qty','Reorder'],['variance_qty','Variance'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},h('button',{className:'miniBtn',disabled:busy,onClick:()=>stockCount(r)},'Count'),['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'miniBtn',disabled:busy,onClick:()=>policy(r)},'Policy'):null)]
+   ],empty:'No outlet inventory movements yet.'})),
+   h('div',{className:'notice'},h('b',null,'Safe stock control'),h('span',null,'Physical count records mismatches only. It does not automatically alter the inventory ledger. Any stock adjustment remains an approved inventory control.'))
+  );
+ }else if(mode==='settlementintel'){
+  body=h(React.Fragment,null,
+   h('div',{className:'stats'},
+    h(Card,{t:'Current',v:money(aging.current||0),s:'Open settlement value'}),
+    h(Card,{t:'1–15 days',v:money((aging.d1_7||0)+(aging.d8_15||0)),s:'Follow-up aging'}),
+    h(Card,{t:'16–30 days',v:money(aging.d16_30||0),s:'Priority follow-up'}),
+    h(Card,{t:'30+ days',v:money(aging.d30_plus||0),s:'Escalation candidate'})
+   ),
+   h('div',{className:'stats'},
+    h(Card,{t:'Company receivable',v:money(aging.company_receivable||0),s:'Negative net payable direction'}),
+    h(Card,{t:'Franchise payable',v:money(aging.franchise_payable||0),s:'Positive net payable direction'}),
+    h(Card,{t:'Open settlements',v:String(summary.open_settlements||0),s:'All non-paid statuses'}),
+    h(Card,{t:'7+ day POS inactive',v:String(summary.no_sale_7d||0),s:'Network risk signal'})
+   ),
+   h(DataTable,{rows:intel.settlements||[],cols:[['outlet','Outlet'],['period_end','Period end'],['verified_sales','Verified sales',money],['earned_margin','Margin',money],['net_payable','Net payable',money],['direction','Direction'],['age_days','Age days'],['aging_bucket','Bucket'],['status','Status']],empty:'No open settlements.'})
+  );
+ }else{
+  body=h(React.Fragment,null,topCards,
+   h('div',{className:'twocol'},
+    h('section',{className:'panel'},h(Title,{t:'Healthy-business leaders',tag:'TOP 10'}),h(DataTable,{rows:intel.top||[],cols:[['outlet','Outlet'],['sales_mtd','MTD',money],['target_achievement','Target %',v=>Number(v).toFixed(1)+'%'],['health_score','Health'],['inventory_score','Stock'],['settlement_score','Settlement'],['healthy_business_score','Score']],empty:'No ranked outlets yet.'})),
+    h('section',{className:'panel'},h(Title,{t:'Needs intervention',tag:'BOTTOM 10'}),h(DataTable,{rows:intel.bottom||[],cols:[['outlet','Outlet'],['sales_mtd','MTD',money],['inactive_days','No-sale days'],['pos_status','POS'],['health','Health'],['healthy_business_score','Score']],empty:'No ranked outlets yet.'}))
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Full outlet leaderboard',tag:'HEALTHY BUSINESS'}),h(DataTable,{rows:outlets,cols:[['code','Code'],['outlet','Outlet'],['district','District'],['sales_30d','30d sales',money],['target_achievement','Target %',v=>Number(v).toFixed(1)+'%'],['inactive_days','Inactive days'],['health_score','Health'],['inventory_score','Stock'],['settlement_score','Settlement'],['healthy_business_score','Score']],empty:'No outlet records.'}))
+  );
+ }
+ return h(React.Fragment,null,msg?h('div',{className:'notice'},h('b',null,'Intelligence'),h('span',null,msg)):null,body);
 }
 
 function OperationsPatch2View({mode,work,onRefresh,user}){
