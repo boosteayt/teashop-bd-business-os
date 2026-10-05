@@ -257,29 +257,73 @@ h('div',{className:'twocol'},
 h('section',{className:'panel'},h(Title,{t:'Operating expenses',tag:'LIVE LEDGER'}),['OWNER','FINANCE'].includes(user.role)?h('div',{className:'formrow'},h(Field,{label:'Expense',value:name,onChange:setName}),h(Field,{label:'Amount',value:amount,type:'number',onChange:setAmount}),h('button',{className:'primary fit',disabled:busy,onClick:add},busy?'Saving…':'Add expense')):null,h(DataTable,{rows:expenses,cols:[['date','Date'],['name','Expense'],['amount','Amount',money]],empty:'No operating expenses entered.'})),
 h('section',{className:'panel'},h(Title,{t:'Franchise & Retail Operations performance share',tag:'P&L ONLY'}),h('label',{className:'field'},'Active tier',h('select',{disabled:user.role!=='OWNER',value:settings.management_share_active_tier||'Base',onChange:e=>setSettings({...settings,management_share_active_tier:e.target.value})},['Base','Growth','Elite','Manual'].map(x=>h('option',{key:x},x)))),settings.management_share_active_tier==='Manual'?h(Field,{label:'Manual %',value:settings.management_share_manual_percent||20,onChange:v=>setSettings({...settings,management_share_manual_percent:v}),type:'number'}):null,h(Field,{label:'VAT / tax provision % (policy)',value:settings.tax_provision_percent||0,onChange:v=>setSettings({...settings,tax_provision_percent:v}),type:'number'}),user.role==='OWNER'?h('button',{className:'primary fit',disabled:busy,onClick:savePolicy},'Save Founder policy'):null,h('div',{className:'profitbox'},h('span',null,'Distributable profit'),h('b',null,money(summary.distributable_profit)),h('span',null,'management '+Number(summary.management_percent||0)+'%'),h('b',null,money(summary.management_share)),h('span',null,'Tea Shop BD remaining'),h('strong',null,money(summary.company_net_after_management))),h('p',{className:'muted'},'Tax provision is stored as an editable policy line and is not automatically applied to an assumed tax base.'))))}
 
-function TeaHub(){const[rows,setRows]=React.useState([]),[q,setQ]=React.useState(''),[cat,setCat]=React.useState('All'),[selected,setSelected]=React.useState(null),[detail,setDetail]=React.useState(null),[msg,setMsg]=React.useState('');
-async function load(){try{const r=await api('tea.overview');setRows(r.teas||[])}catch{setMsg('Tea master could not be loaded.')}}
-React.useEffect(()=>{load()},[]);
-async function openTea(r){setSelected(r);setDetail(null);setMsg('');try{const d=await api('tea.history?product_id='+encodeURIComponent(r.id));setDetail(d)}catch(e){setMsg('Tea history could not be loaded: '+(e.code||'ERROR'))}}
-const cats=['All',...Array.from(new Set(rows.map(x=>x.category)))],filtered=rows.filter(x=>(cat==='All'||x.category===cat)&&(!q||String(x.name+' '+x.sku).toLowerCase().includes(q.toLowerCase())));
-return h(React.Fragment,null,
-h('section',{className:'moduleHead'},h('small',null,'MASTER LIFECYCLE HUB'),h('h1',null,'Tea'),h('p',null,'Every Tea Shop BD tea name in one place: purchase → raw tea → blend → QC → pack → stock → outlet → POS sale → margin → profitability.')),
-msg?h('div',{className:'notice'},msg):null,
-h('section',{className:'panel teaToolbar'},h(Field,{label:'Search tea',value:q,onChange:setQ}),h('label',{className:'field'},'Category',h('select',{value:cat,onChange:e=>setCat(e.target.value)},cats.map(x=>h('option',{key:x},x)))),h(Pill,{kind:'success'},filtered.length+' of '+rows.length+' teas')),
-h('div',{className:'teaLayout'},
- h('section',{className:'panel teaMaster'},h(Title,{t:'Tea master',tag:'99 NAMES'}),filtered.length?h('div',{className:'tablewrap'},h('table',null,h('thead',null,h('tr',null,['Code','Tea name','Category','Buy / kg','SKUs','Finished stock','Last production'].map(x=>h('th',{key:x},x)))),h('tbody',null,filtered.map(r=>h('tr',{key:r.id,className:selected&&Number(selected.id)===Number(r.id)?'selectedRow':'',onClick:()=>openTea(r)},h('td',null,r.sku),h('td',null,h('button',{className:'teaLink'},r.name)),h('td',null,r.category),h('td',null,money(r.purchase_cost_per_kg)),h('td',null,r.sku_count),h('td',null,Number(r.finished_stock_qty||0).toFixed(2)),h('td',null,r.last_produced_at||'—'))))):h(Empty,{text:'No tea matches the filter.'})),
- h('section',{className:'panel teaDetail'},h(Title,{t:selected?selected.name+' · complete history':'Tea history',tag:selected?'TRACE':'SELECT TEA'}),!selected?h(Empty,{text:'Select any tea to see purchase, blend, packaging, stock, outlet and POS history.'}):!detail?h(Loading):h(React.Fragment,null,
-   h('div',{className:'miniMetrics'},h('div',null,h('span',null,'Current buy / kg'),h('b',null,money(detail.tea.purchase_cost_per_kg))),h('div',null,h('span',null,'Pack / SKU'),h('b',null,String((detail.packs||[]).length))),h('div',null,h('span',null,'Timeline events'),h('b',null,String((detail.events||[]).length)))),
+function TeaHub(){
+ const[rows,setRows]=React.useState([]),[q,setQ]=React.useState(''),[cat,setCat]=React.useState('All'),[selected,setSelected]=React.useState(null),[detail,setDetail]=React.useState(null),[msg,setMsg]=React.useState('');
+ async function load(){try{const r=await api('tea.overview');setRows(r.teas||[])}catch{setMsg('Tea master could not be loaded.')}}
+ React.useEffect(()=>{load()},[]);
+ async function openTea(r){setSelected(r);setDetail(null);setMsg('');try{const d=await api('tea.history?product_id='+encodeURIComponent(r.id));setDetail(d)}catch(e){setMsg('Tea history could not be loaded: '+(e.code||'ERROR'))}}
+ const cats=['All',...Array.from(new Set(rows.map(x=>x.category)))];
+ const filtered=rows.filter(x=>(cat==='All'||x.category===cat)&&(!q||String(x.name+' '+x.sku).toLowerCase().includes(q.toLowerCase())));
+ const masterHead=h('thead',null,h('tr',null,['Code','Tea name','Category','Buy / kg','SKUs','Finished stock','Last production'].map(x=>h('th',{key:x},x))));
+ const masterRows=filtered.map(r=>h('tr',{key:r.id,className:selected&&Number(selected.id)===Number(r.id)?'selectedRow':'',onClick:()=>openTea(r)},
+  h('td',null,r.sku),h('td',null,h('button',{className:'teaLink'},r.name)),h('td',null,r.category),h('td',null,money(r.purchase_cost_per_kg)),h('td',null,r.sku_count),h('td',null,Number(r.finished_stock_qty||0).toFixed(2)),h('td',null,r.last_produced_at||'—')
+ ));
+ const masterBody=filtered.length?h('div',{className:'tablewrap'},h('table',null,masterHead,h('tbody',null,masterRows))):h(Empty,{text:'No tea matches the filter.'});
+ let detailBody;
+ if(!selected) detailBody=h(Empty,{text:'Select any tea to see purchase, blend, packaging, stock, outlet and POS history.'});
+ else if(!detail) detailBody=h(Loading);
+ else {
+  const packHead=h('thead',null,h('tr',null,['Pack','MRP','Stock'].map(x=>h('th',{key:x},x))));
+  const packRows=(detail.packs||[]).map(x=>h('tr',{key:x.id},h('td',null,x.grams+'g'),h('td',null,money(x.mrp)),h('td',null,Number(x.stock_qty||0).toFixed(2))));
+  const timelineRows=(detail.events||[]).slice(0,40).map((e,i)=>h('div',{className:'timelineRow',key:i},
+   h('i'),h('div',null,h('span',null,(e.event_at||'')+' · '+e.type),h('b',null,e.reference||'—'),h('p',null,e.detail||'')),h('strong',null,e.amount!==undefined&&e.amount!==null?money(e.amount):'')
+  ));
+  detailBody=h(React.Fragment,null,
+   h('div',{className:'miniMetrics'},
+    h('div',null,h('span',null,'Current buy / kg'),h('b',null,money(detail.tea.purchase_cost_per_kg))),
+    h('div',null,h('span',null,'Pack / SKU'),h('b',null,String((detail.packs||[]).length))),
+    h('div',null,h('span',null,'Timeline events'),h('b',null,String((detail.events||[]).length)))
+   ),
    h('div',{className:'historyFlow'},'Purchase → Blend / Production → QC → Packaging → Warehouse → Outlet → POS Sale → Settlement / Profit'),
-   h('div',{className:'tablewrap compactTable'},h('table',null,h('thead',null,h('tr',null,['Pack','MRP','Stock'].map(x=>h('th',{key:x},x)))),h('tbody',null,(detail.packs||[]).map(x=>h('tr',{key:x.id},h('td',null,x.grams+'g'),h('td',null,money(x.mrp)),h('td',null,Number(x.stock_qty||0).toFixed(2)))))),
-   h('div',{className:'timeline'},(detail.events||[]).length?(detail.events||[]).slice(0,40).map((e,i)=>h('div',{className:'timelineRow',key:i},h('i'),h('div',null,h('span',null,(e.event_at||'')+' · '+e.type),h('b',null,e.reference||'—'),h('p',null,e.detail||'')),h('strong',null,e.amount!==undefined&&e.amount!==null?money(e.amount):''))):h(Empty,{text:'No transaction history yet.'}))
-  )))
-)}
+   h('div',{className:'tablewrap compactTable'},h('table',null,packHead,h('tbody',null,packRows))),
+   h('div',{className:'timeline'},timelineRows.length?timelineRows:h(Empty,{text:'No transaction history yet.'}))
+  );
+ }
+ return h(React.Fragment,null,
+  h('section',{className:'moduleHead'},h('small',null,'MASTER LIFECYCLE HUB'),h('h1',null,'Tea'),h('p',null,'Every Tea Shop BD tea name in one place: purchase → raw tea → blend → QC → pack → stock → outlet → POS sale → margin → profitability.')),
+  msg?h('div',{className:'notice'},msg):null,
+  h('section',{className:'panel teaToolbar'},h(Field,{label:'Search tea',value:q,onChange:setQ}),h('label',{className:'field'},'Category',h('select',{value:cat,onChange:e=>setCat(e.target.value)},cats.map(x=>h('option',{key:x},x)))),h(Pill,{kind:'success'},filtered.length+' of '+rows.length+' teas')),
+  h('div',{className:'teaLayout'},
+   h('section',{className:'panel teaMaster'},h(Title,{t:'Tea master',tag:'99 NAMES'}),masterBody),
+   h('section',{className:'panel teaDetail'},h(Title,{t:selected?selected.name+' · complete history':'Tea history',tag:selected?'TRACE':'SELECT TEA'}),detailBody)
+  )
+ );
+}
 function PurchaseHub(){const[tab,setTab]=React.useState('purchase');return h(React.Fragment,null,h('div',{className:'hubTabs'},h('button',{className:tab==='purchase'?'active':'',onClick:()=>setTab('purchase')},'Tea Purchase & Raw Stock'),h('button',{className:tab==='suppliers'?'active':'',onClick:()=>setTab('suppliers')},'Suppliers & Payables')),tab==='purchase'?h(Purchases):h(Suppliers))}
 function ProductsSKU(){const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState('');React.useEffect(()=>{api('tea.overview').then(r=>setRows(r.teas||[])).catch(()=>setMsg('Product / SKU data could not be loaded.'))},[]);return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'FINISHED PRODUCT MASTER'),h('h1',null,'Products / SKU'),h('p',null,'Tea master linked to pack configuration, MRP, finished stock and production history.')),msg?h('div',{className:'notice'},msg):null,h(DataTable,{rows,cols:[['sku','Code'],['name','Tea'],['category','Category'],['purchase_cost_per_kg','Tea cost/kg',money],['sku_count','Pack SKUs'],['finished_stock_qty','Finished stock']],empty:'No products found.'}))}
-function QCWastage(){const[qc,setQc]=React.useState([]),[waste,setWaste]=React.useState([]),[msg,setMsg]=React.useState('');React.useEffect(()=>{Promise.all([api('workspace.records?module=qc'),api('workspace.records?module=wastage')]).then(([a,b])=>{setQc(a.records||[]);setWaste(b.records||[])}).catch(()=>setMsg('QC / wastage records could not be loaded.'))},[]);return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'QUALITY & YIELD CONTROL'),h('h1',null,'QC & Wastage'),h('p',null,'Incoming, blend and finished-tea quality checks plus expected vs actual production loss.')),msg?h('div',{className:'notice'},msg):null,h('div',{className:'twocol'},h('section',{className:'panel'},h(Title,{t:'QC checks',tag:'QUALITY'}),h(DataTable,{rows:qc,cols:[['checked_at','Checked'],['tea','Tea'],['batch_no','Batch'],['check_type','Type'],['status','Status'],['moisture_percent','Moisture %'],['notes','Notes']],empty:'No QC checks recorded yet.'})),h('section',{className:'panel'},h(Title,{t:'Wastage & variance',tag:'YIELD'}),h(DataTable,{rows:waste,cols:[['created_at','Date'],['tea','Tea'],['reference_type','Source'],['qty_kg','Qty kg'],['value_amount','Value',money],['reason','Reason'],['status','Status']],empty:'No wastage records yet.'})))}
+function QCWastage(){
+ const[qc,setQc]=React.useState([]),[waste,setWaste]=React.useState([]),[msg,setMsg]=React.useState('');
+ React.useEffect(()=>{Promise.all([api('workspace.records?module=qc'),api('workspace.records?module=wastage')]).then(([a,b])=>{setQc(a.records||[]);setWaste(b.records||[])}).catch(()=>setMsg('QC / wastage records could not be loaded.'))},[]);
+ const qcTable=h(DataTable,{rows:qc,cols:[['checked_at','Checked'],['tea','Tea'],['batch_no','Batch'],['check_type','Type'],['status','Status'],['moisture_percent','Moisture %'],['notes','Notes']],empty:'No QC checks recorded yet.'});
+ const wasteTable=h(DataTable,{rows:waste,cols:[['created_at','Date'],['tea','Tea'],['reference_type','Source'],['qty_kg','Qty kg'],['value_amount','Value',money],['reason','Reason'],['status','Status']],empty:'No wastage records yet.'});
+ return h(React.Fragment,null,
+  h('section',{className:'moduleHead'},h('small',null,'QUALITY & YIELD CONTROL'),h('h1',null,'QC & Wastage'),h('p',null,'Incoming, blend and finished-tea quality checks plus expected vs actual production loss.')),
+  msg?h('div',{className:'notice'},msg):null,
+  h('div',{className:'twocol'},h('section',{className:'panel'},h(Title,{t:'QC checks',tag:'QUALITY'}),qcTable),h('section',{className:'panel'},h(Title,{t:'Wastage & variance',tag:'YIELD'}),wasteTable))
+ );
+}
 function OperationsWorkspace(){const[rows,setRows]=React.useState([]),[summary,setSummary]=React.useState(null),[msg,setMsg]=React.useState('');React.useEffect(()=>{Promise.all([api('franchises'),api('reports.summary')]).then(([a,b])=>{setRows(a.franchises||[]);setSummary(b.totals||{})}).catch(()=>setMsg('Operations data could not be loaded.'))},[]);const active=rows.filter(x=>x.status==='active').length,watch=rows.filter(x=>['watch','critical'].includes(x.status)).length;return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Outlet pipeline, sales monitoring, stock follow-up, settlement discipline, territory performance and outlet health.')),msg?h('div',{className:'notice'},msg):null,h('div',{className:'stats'},h(Card,{t:'Active outlets',v:String(active),s:rows.length+' total records'}),h(Card,{t:'Watch / critical',v:String(watch),s:'Needs operating attention'}),h(Card,{t:'Verified network sales',v:money(summary?.sales||0),s:'POS source'}),h(Card,{t:'Earned franchise margin',v:money(summary?.earned_margin||0),s:'25 / 27 / 30 / manual'})),h(DataTable,{rows,cols:[['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['margin_tier','Tier'],['margin_percent','Margin %'],['status','Status']],empty:'No outlet records yet.'}))}
-function RecordsWorkspace({module,title,desc}){const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState('');React.useEffect(()=>{api('workspace.records?module='+encodeURIComponent(module)).then(r=>setRows(r.records||[])).catch(e=>setMsg('This workspace could not be loaded: '+(e.code||'ERROR'))},[module]);const keys=rows[0]?Object.keys(rows[0]).filter(k=>k!=='id').slice(0,9):[];const cols=keys.map(k=>[k,k.replaceAll('_',' ').replace(/\b\w/g,x=>x.toUpperCase()),(v)=>/(amount|profit|share|cost|value|paid)/.test(k)?money(v):String(v??'')]);return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'TEA SHOP BD BUSINESS OS'),h('h1',null,title),h('p',null,desc)),msg?h('div',{className:'notice'},msg):null,h(DataTable,{rows,cols,empty:'No records yet. The database module is ready for live entries.'}))}
+function RecordsWorkspace({module,title,desc}){
+ const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState('');
+ React.useEffect(()=>{api('workspace.records?module='+encodeURIComponent(module)).then(r=>setRows(r.records||[])).catch(e=>setMsg('This workspace could not be loaded: '+(e.code||'ERROR')))},[module]);
+ const keys=rows[0]?Object.keys(rows[0]).filter(k=>k!=='id').slice(0,9):[];
+ const cols=keys.map(k=>[k,k.replaceAll('_',' ').replace(/\b\w/g,x=>x.toUpperCase()),v=>/(amount|profit|share|cost|value|paid)/.test(k)?money(v):String(v??'')]);
+ return h(React.Fragment,null,
+  h('section',{className:'moduleHead'},h('small',null,'TEA SHOP BD BUSINESS OS'),h('h1',null,title),h('p',null,desc)),
+  msg?h('div',{className:'notice'},msg):null,
+  h(DataTable,{rows,cols,empty:'No records yet. The database module is ready for live entries.'})
+ );
+}
 function SettingsWorkspace({user}){const[settings,setSettings]=React.useState({}),[msg,setMsg]=React.useState('');React.useEffect(()=>{api('settings').then(r=>setSettings(r.settings||{})).catch(()=>setMsg('Settings could not be loaded.'))},[]);const rows=Object.entries(settings).map(([setting_key,setting_value],i)=>({id:i+1,setting_key,setting_value}));return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'SYSTEM CONTROL'),h('h1',null,'Settings'),h('p',null,'Founder-controlled pricing, tax and performance policy settings. Operational values stay separate from personal identities.')),msg?h('div',{className:'notice'},msg):null,user.role!=='OWNER'?h('div',{className:'notice'},'Read-only settings for this role.'):null,h(DataTable,{rows,cols:[['setting_key','Setting'],['setting_value','Value']],empty:'No settings configured.'}))}
 function Reports(){const[data,setData]=React.useState(null),[supplierReport,setSupplierReport]=React.useState([]),[packReport,setPackReport]=React.useState({}),[error,setError]=React.useState('');
 React.useEffect(()=>{Promise.all([api('reports.summary'),api('supplier.report'),api('packaging.report')]).then(([a,b,d])=>{setData(a);setSupplierReport(b.report||[]);setPackReport(d||{})}).catch(()=>setError('Reports could not be loaded.'))},[]);
