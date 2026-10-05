@@ -320,13 +320,13 @@ function ops_v2_run_automation(PDO $pdo,?int $scopeFid,int $uid): array {
   GROUP BY f.id,f.name,f.opened_at HAVING last_activity IS NOT NULL AND DATEDIFF(NOW(),last_activity)>=3")->fetchAll();
  foreach($rows as $r){
   $days=max(3,(int)floor((time()-strtotime((string)$r['last_activity']))/86400));$fid=(int)$r['franchise_id'];
-  $candidates[]=['key'=>'v2:pos_inactive:'.$fid,'franchise_id'=>$fid,'rule_code'=>'pos_inactive_3d','task_type'=>'follow_up','title'=>'POS inactivity follow-up · '.$r['name'],'detail'=>$days.' days without verified POS sale','priority'=>$days>=7?'critical':'high','source_type'=>'franchise','source_id'=>$fid];
+  $candidates[]=['key'=>'v2:pos_inactive:'.$fid,'franchise_id'=>$fid,'rule_code'=>'pos_inactive_3d','task_type'=>'follow_up','title'=>'POS inactivity follow-up | '.$r['name'],'detail'=>$days.' days without verified POS sale','priority'=>$days>=7?'critical':'high','source_type'=>'franchise','source_id'=>$fid];
  }
 
  $rows=$pdo->query("SELECT s.id,s.franchise_id,f.name,DATEDIFF(CURDATE(),s.period_end) age_days,s.net_payable
   FROM settlements s JOIN franchises f ON f.id=s.franchise_id
   WHERE s.status<>'paid' AND DATEDIFF(CURDATE(),s.period_end)>7".($scopeFid?" AND f.id=".(int)$scopeFid:'')." ORDER BY s.id")->fetchAll();
- foreach($rows as $r){$age=(int)$r['age_days'];$candidates[]=['key'=>'v2:settlement:'.$r['id'],'franchise_id'=>(int)$r['franchise_id'],'rule_code'=>'settlement_overdue','task_type'=>'settlement','title'=>'Settlement collection follow-up · '.$r['name'],'detail'=>$age.' days overdue · '.number_format(abs((float)$r['net_payable']),2),'priority'=>$age>15?'critical':'high','source_type'=>'settlement','source_id'=>(int)$r['id']];}
+ foreach($rows as $r){$age=(int)$r['age_days'];$candidates[]=['key'=>'v2:settlement:'.$r['id'],'franchise_id'=>(int)$r['franchise_id'],'rule_code'=>'settlement_overdue','task_type'=>'settlement','title'=>'Settlement collection follow-up | '.$r['name'],'detail'=>$age.' days overdue | '.number_format(abs((float)$r['net_payable']),2),'priority'=>$age>15?'critical':'high','source_type'=>'settlement','source_id'=>(int)$r['id']];}
 
  $stockSql="SELECT x.franchise_id,x.product_pack_id,f.name outlet,p.name product,pp.grams,pp.mrp,x.stock_qty,COALESCE(s.qty_30d,0) qty_30d
   FROM (SELECT location_id franchise_id,product_pack_id,SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty WHEN movement_type IN('transfer_out','sale','damage') THEN -qty ELSE qty END) stock_qty
@@ -338,17 +338,17 @@ function ops_v2_run_automation(PDO $pdo,?int $scopeFid,int $uid): array {
   $stock=max(0,(float)$r['stock_qty']);$daily=(float)$r['qty_30d']/30;$days=$daily>0?$stock/$daily:null;
   if($stock<=0||($days!==null&&$days<7)){
    $fid=(int)$r['franchise_id'];$pid=(int)$r['product_pack_id'];$critical=$stock<=0;
-   $candidates[]=['key'=>'v2:stock:'.$fid.':'.$pid,'franchise_id'=>$fid,'rule_code'=>'stock_risk','task_type'=>'stock','title'=>($critical?'Out of stock':'Low stock').' · '.$r['product'].' '.$r['grams'].'g','detail'=>'Outlet '.$r['outlet'].' · stock '.round($stock,3).($days!==null?' · '.round($days,1).' days cover':''),'priority'=>$critical?'critical':'high','source_type'=>'product_pack','source_id'=>$pid];
+   $candidates[]=['key'=>'v2:stock:'.$fid.':'.$pid,'franchise_id'=>$fid,'rule_code'=>'stock_risk','task_type'=>'stock','title'=>($critical?'Out of stock':'Low stock').' | '.$r['product'].' '.$r['grams'].'g','detail'=>'Outlet '.$r['outlet'].' | stock '.round($stock,3).($days!==null?' | '.round($days,1).' days cover':''),'priority'=>$critical?'critical':'high','source_type'=>'product_pack','source_id'=>$pid];
   }
  }
 
  $rows=$pdo->query("SELECT tr.id,tr.franchise_id,f.name,tr.course_title,tr.status,tr.expires_at FROM outlet_training_records tr JOIN franchises f ON f.id=tr.franchise_id
   WHERE (tr.status='expired' OR (tr.expires_at IS NOT NULL AND tr.expires_at<CURDATE()))".($scopeFid?" AND f.id=".(int)$scopeFid:'')." ORDER BY tr.id")->fetchAll();
- foreach($rows as $r){$candidates[]=['key'=>'v2:training:'.$r['id'],'franchise_id'=>(int)$r['franchise_id'],'rule_code'=>'training_expired','task_type'=>'training','title'=>'Training renewal · '.$r['name'],'detail'=>$r['course_title'].($r['expires_at']?' · expired '.$r['expires_at']:''),'priority'=>'high','source_type'=>'outlet_training','source_id'=>(int)$r['id']];}
+ foreach($rows as $r){$candidates[]=['key'=>'v2:training:'.$r['id'],'franchise_id'=>(int)$r['franchise_id'],'rule_code'=>'training_expired','task_type'=>'training','title'=>'Training renewal | '.$r['name'],'detail'=>$r['course_title'].($r['expires_at']?' | expired '.$r['expires_at']:''),'priority'=>'high','source_type'=>'outlet_training','source_id'=>(int)$r['id']];}
 
  $rows=$pdo->query("SELECT t.id,t.franchise_id,f.name,t.ticket_no,t.subject,t.priority,t.due_at FROM support_tickets t JOIN franchises f ON f.id=t.franchise_id
   WHERE t.category='customer' AND t.status NOT IN('resolved','closed','cancelled') AND (t.priority IN('high','critical') OR (t.due_at IS NOT NULL AND t.due_at<NOW()))".($scopeFid?" AND f.id=".(int)$scopeFid:'')." ORDER BY t.id")->fetchAll();
- foreach($rows as $r){$candidates[]=['key'=>'v2:complaint:'.$r['id'],'franchise_id'=>(int)$r['franchise_id'],'rule_code'=>'customer_complaint','task_type'=>'support','title'=>'Customer complaint · '.$r['name'],'detail'=>$r['ticket_no'].' · '.$r['subject'],'priority'=>$r['priority']==='critical'?'critical':'high','source_type'=>'support_ticket','source_id'=>(int)$r['id']];}
+ foreach($rows as $r){$candidates[]=['key'=>'v2:complaint:'.$r['id'],'franchise_id'=>(int)$r['franchise_id'],'rule_code'=>'customer_complaint','task_type'=>'support','title'=>'Customer complaint | '.$r['name'],'detail'=>$r['ticket_no'].' | '.$r['subject'],'priority'=>$r['priority']==='critical'?'critical':'high','source_type'=>'support_ticket','source_id'=>(int)$r['id']];}
 
  $keys=[];$created=0;$ruleCounts=[];
  $pdo->beginTransaction();
