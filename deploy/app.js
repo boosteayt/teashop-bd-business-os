@@ -597,7 +597,7 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
     h(Field,{label:'Detail',value:task.detail,onChange:v=>setTask({...task,detail:v})}),
     h('button',{className:'primary fit',disabled:busy,onClick:createTask},'Create task')
    )),
-   h(DataTable,{rows:work.tasks||[],cols:[['outlet','Outlet'],['title','Task'],['task_type','Type'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['status','Status'],['escalation_level','Esc.'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTask(r,'in_progress')},'Start'):null,!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTask(r,'done')},'Done'):null,!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn dangerLite',onClick:()=>updateTask(r,r.status,true)},'Escalate'):null)]],empty:'No operations tasks yet.'})
+   h(DataTable,{rows:work.tasks||[],cols:[['outlet','Outlet'],['title','Task'],['task_type','Type'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['status','Status'],['last_update','Last update'],['escalation_level','Esc.'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTask(r,'in_progress')},'Start'):null,!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTask(r,'done')},'Done'):null,!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn dangerLite',onClick:()=>updateTask(r,r.status,true)},'Escalate'):null)]],empty:'No operations tasks yet.'})
   );
  }else if(mode==='visits'){
   async function saveVisit(){if(!visit.franchise_id)return;await act(async()=>{await api('operations.visit.save',{method:'POST',body:{...visit,id:Number(visit.id||0),franchise_id:Number(visit.franchise_id),visitor_user_id:visit.visitor_user_id?Number(visit.visitor_user_id):null}});setVisit({id:0,franchise_id:'',visit_type:'routine',status:'scheduled',scheduled_at:'',visitor_user_id:'',cleanliness_score:100,branding_score:100,product_display_score:100,pricing_compliance_score:100,pos_usage_score:100,stock_handling_score:100,findings:'',corrective_action:'',next_visit_at:''})},'Field visit saved')}
@@ -689,8 +689,8 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
     h(Field,{label:'Due at',value:marketing.due_at,onChange:v=>setMarketing({...marketing,due_at:v}),type:'datetime-local'}),
     h(Field,{label:'Start',value:marketing.start_date,onChange:v=>setMarketing({...marketing,start_date:v}),type:'date'}),
     h(Field,{label:'End',value:marketing.end_date,onChange:v=>setMarketing({...marketing,end_date:v}),type:'date'}),
-    selectField('Assets ready',marketing.assets_ready,v=>setMarketing({...marketing,assets_ready:v}),['0','1']),
-    selectField('Execution verified',marketing.execution_verified,v=>setMarketing({...marketing,execution_verified:v}),['0','1']),
+    h('label',{className:'field'},'Assets ready',h('select',{value:marketing.assets_ready,onChange:e=>setMarketing({...marketing,assets_ready:e.target.value})},h('option',{value:'0'},'No'),h('option',{value:'1'},'Yes'))),
+    h('label',{className:'field'},'Execution verified',h('select',{value:marketing.execution_verified,onChange:e=>setMarketing({...marketing,execution_verified:e.target.value})},h('option',{value:'0'},'No'),h('option',{value:'1'},'Yes'))),
     h(Field,{label:'Sales before',value:marketing.sales_before,onChange:v=>setMarketing({...marketing,sales_before:v}),type:'number'}),
     h(Field,{label:'Sales during',value:marketing.sales_during,onChange:v=>setMarketing({...marketing,sales_during:v}),type:'number'}),
     h(Field,{label:'Notes',value:marketing.notes,onChange:v=>setMarketing({...marketing,notes:v})}),
