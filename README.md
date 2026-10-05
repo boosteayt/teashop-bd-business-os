@@ -237,3 +237,15 @@ Patch 4 DB gate:
 
 Full Patch 1–4 closure gate:
 `php server/verify-operations-final.php`
+
+
+## Final Operations deployment
+For an existing production database, use the combined idempotent upgrader after Update from Remote and before deploying the final HEAD:
+
+`php server/upgrade-operations-final.php`
+
+It reconciles Operations Patch 1–4 schemas, preserves existing Tea/business data, and seeds missing outlet profile/pipeline/checklist foundations for any existing franchise records.
+
+After deployment, run:
+
+`php server/verify-operations-final.php`
