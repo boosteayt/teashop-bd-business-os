@@ -111,3 +111,32 @@ Server-side bootstrap/install scripts create role-based accounts such as:
 `owner@teashop.bd`, `operations@teashop.bd`, `finance@teashop.bd`, `warehouse@teashop.bd`, `production@teashop.bd`, `qc@teashop.bd`, `packaging@teashop.bd`, `regional@teashop.bd`, `franchise@teashop.bd`, `manager@teashop.bd`, `cashier@teashop.bd`, `auditor@teashop.bd`.
 
 Temporary passwords are generated on the server, are not committed to Git, and must be changed after first login.
+
+
+## Operations Patch 1 — Outlet Network Core
+Patch 1 adds the first complete franchise-network operating layer without changing Founder-only pricing or finance authority.
+
+Implemented:
+- Outlet 360° profile
+- Lead -> Verification -> Agreement -> Shop Ready -> Training -> Stock Ready -> POS Ready -> Launch -> Live pipeline
+- Division -> District -> Upazila territory hierarchy
+- 10-step opening checklist
+- 8-step suspension/closure checklist
+- Owner/franchisee profile and premises/agreement fields
+- Outlet staff registry
+- Staff/outlet training records
+- Outlet document registry
+- Outlet Health foundation with Sales 35%, Stock 25%, Settlement 25%, Compliance 15%
+- Stock, sales and settlement summary inside Outlet 360°
+- Full outlet timeline combining pipeline/profile/checklist/staff/training/health events with POS sales, stock movements and settlements
+- Owner-only final Suspended / Closed pipeline states
+- Operations/Regional field-work permissions with audit logging
+
+Existing production databases must run:
+`php server/upgrade-operations-patch1.php`
+
+Read-only production DB gate:
+`php server/verify-operations-patch1.php`
+
+Fresh installers automatically apply:
+`database/migrations/2026_10_05_operations_patch1_outlet_network_core.sql`
