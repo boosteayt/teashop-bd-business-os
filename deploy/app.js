@@ -95,7 +95,7 @@ function Page({page,user,state,setState}){const p={
  'Margin & Settlement':Settlements,
  'Finance & Accounts':Finance,
  'Profit & Loss':Finance,
- 'Performance & Incentives':()=>h(RecordsWorkspace,{module:'performance',title:'Performance & Incentives',desc:'Role-based scorecards and performance share on distributable Franchise Division profit.'}),
+ 'Performance & Incentives':PerformanceWorkspace,
  'Customers':()=>h(RecordsWorkspace,{module:'customers',title:'Customers',desc:'Outlet customer and loyalty records linked to retail sales.'}),
  'Corporate / B2B':()=>h(RecordsWorkspace,{module:'b2b',title:'Corporate / B2B',desc:'Head-office corporate tea leads and bulk orders, separate from franchise economics.'}),
  'Logistics':()=>h(RecordsWorkspace,{module:'logistics',title:'Logistics',desc:'Dispatch, challan, carrier, delivery cost and outlet receiving status.'}),
@@ -557,7 +557,7 @@ function OperationsWorkspace({user}){
  React.useEffect(()=>{load()},[period]);
  if(!data||!work||!intel||!alerts||!perf||!report)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['performance','Performance'],['reports','Reports'],['security','Control Audit']];
+ const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications'],['salesintel','Sales & Targets'],['stockintel','Stock Intelligence'],['settlementintel','Settlement Aging'],['leaderboard','Leaderboard'],['alerts','Alerts'],['performance','Performance'],['reports','Reports']].concat(['OWNER','OPERATIONS'].includes(user.role)?[['security','Control Audit']]:[]);
  let body=null;
  if(tab==='network'){
   body=h(React.Fragment,null,
@@ -874,6 +874,42 @@ function OperationsPatch2View({mode,work,onRefresh,user}){
  }
  return h(React.Fragment,null,msg?h('div',{className:'notice'},h('b',null,'Operations'),h('span',null,msg)):null,body);
 }
+
+function PerformanceWorkspace({user}){
+ const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false),[period,setPeriod]=React.useState(new Date().toISOString().slice(0,7)),[preview,setPreview]=React.useState(null);
+ async function load(){
+  try{
+   const hist=await api('operations.performance.history');setRows(hist.records||[]);
+   if(['OWNER','OPERATIONS','REGIONAL'].includes(user.role)){const p=await api('operations.performance.preview?period='+encodeURIComponent(period));setPreview(p.preview||null)}else setPreview(null);
+  }catch(e){setMsg('Performance workspace could not be loaded: '+(e.code||'ERROR'))}
+ }
+ React.useEffect(()=>{load()},[period]);
+ async function act(fn,success){setBusy(true);setMsg('');try{await fn();setMsg(success);await load()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ async function generate(){await act(()=>api('operations.performance.generate',{method:'POST',body:{period}}),'Performance review generated')}
+ async function approve(r){await act(()=>api('operations.performance.approve',{method:'POST',body:{id:Number(r.id)}}),'Performance review approved')}
+ async function paid(r){await act(()=>api('operations.performance.paid',{method:'POST',body:{id:Number(r.id)}}),'Performance share marked paid')}
+ return h(React.Fragment,null,
+  h('section',{className:'moduleHead'},h('small',null,'ROLE PERFORMANCE'),h('h1',null,'Performance & Incentives'),h('p',null,'Role-based scorecard and P&L-based performance share. Operations cannot approve its own review; Finance can only mark an Owner-approved share as paid.')),
+  msg?h('div',{className:'notice'},h('b',null,'Performance'),h('span',null,msg)):null,
+  ['OWNER','OPERATIONS','REGIONAL'].includes(user.role)?h('section',{className:'panel'},h(Title,{t:'Scorecard preview',tag:'30 / 20 / 15 / 15 / 10 / 10'}),
+   h('div',{className:'formrow compactOpsForm'},h('label',{className:'field'},'Period',h('input',{type:'month',value:period,onChange:e=>setPeriod(e.target.value)})),['OWNER','OPERATIONS'].includes(user.role)?h('button',{className:'primary fit',disabled:busy,onClick:generate},'Generate review'):null),
+   preview?h('div',{className:'stats performanceWeights'},
+    h(Card,{t:'Sales Growth · 30%',v:Number(preview.sales_growth_score||0).toFixed(1),s:'Growth normalized'}),
+    h(Card,{t:'Stock Rotation · 20%',v:Number(preview.stock_rotation_score||0).toFixed(1),s:'Active SKU rotation'}),
+    h(Card,{t:'Outlet Health · 15%',v:Number(preview.outlet_health_score||0).toFixed(1),s:'Latest health'}),
+    h(Card,{t:'Settlement · 15%',v:Number(preview.settlement_score||0).toFixed(1),s:'Discipline'}),
+    h(Card,{t:'Retention · 10%',v:Number(preview.retention_score||0).toFixed(1),s:'Network retention'}),
+    h(Card,{t:'Compliance · 10%',v:Number(preview.compliance_score||0).toFixed(1),s:'SOP'}),
+    h(Card,{t:'Weighted score',v:Number(preview.total_score||0).toFixed(2),s:'Role result'}),
+    h(Card,{t:'Share preview',v:money(preview.performance_share_amount||0),s:Number(preview.performance_share_percent||0).toFixed(2)+'% of distributable profit'})
+   ):h(Loading)
+  ):null,
+  h('section',{className:'panel'},h(Title,{t:'Performance review history',tag:'APPROVAL / PAYMENT'}),
+   h(DataTable,{rows,cols:[['period_end','Period'],['user_name','Role user'],['total_score','Score'],['distributable_profit','Distributable profit',money],['performance_share_percent','Share %'],['performance_share_amount','Share',money],['status','Status'],['approved_by_name','Approved by'],['actions','Action',(_,r)=>h('div',{className:'actionRow'},user.role==='OWNER'&&r.status==='review'?h('button',{className:'miniBtn',disabled:busy,onClick:()=>approve(r)},'Approve'):null,['OWNER','FINANCE'].includes(user.role)&&r.status==='approved'?h('button',{className:'miniBtn',disabled:busy,onClick:()=>paid(r)},'Mark paid'):null)]],empty:'No performance review records yet.'})
+  )
+ );
+}
+
 function RecordsWorkspace({module,title,desc}){
  const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState('');
  React.useEffect(()=>{api('workspace.records?module='+encodeURIComponent(module)).then(r=>setRows(r.records||[])).catch(e=>setMsg('This workspace could not be loaded: '+(e.code||'ERROR')))},[module]);
