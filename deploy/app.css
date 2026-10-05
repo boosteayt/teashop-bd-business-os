@@ -663,3 +663,11 @@ td b{font-size:9.5px}
 .opsTabs button.active:nth-child(-n+5){background:#153e2e;color:#fff;border-color:#153e2e}
 @media(max-width:1180px){.opsV2Form{grid-template-columns:repeat(2,minmax(150px,1fr))}.threecol.opsV2Grid{grid-template-columns:1fr 1fr}}
 @media(max-width:760px){.opsV2Form,.threecol.opsV2Grid{grid-template-columns:1fr}}
+
+.regionHeat{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.regionHeat article{border:1px solid #dfe8e3;background:#fbfdfc;border-radius:13px;padding:13px;min-width:0}
+.regionHeat article.attention{border-color:#ead8bf;background:#fffaf2}
+.regionHeat article.healthy{border-color:#d7e7df;background:#f8fcfa}
+.regionHeat small,.regionHeat span,.regionHeat em{display:block}.regionHeat small{font-size:7.5px;color:#7b8f84;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.regionHeat b{display:block;font-size:12px;color:#17392a;margin:7px 0 5px}.regionHeat span{font-size:8px;color:#657b70}.regionHeat em{font-style:normal;font-size:8px;color:#2c6a50;margin-top:7px}
+@media(max-width:1180px){.regionHeat{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.regionHeat{grid-template-columns:1fr}}
