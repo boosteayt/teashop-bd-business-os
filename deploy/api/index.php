@@ -125,7 +125,7 @@ function ops_alert_upsert(PDO $pdo,string $key,?int $fid,string $type,string $se
 }
 function ops_refresh_alerts(PDO $pdo): array {
  $keys=[];
- $generatedTypes=['pos_inactive','settlement_overdue','task_overdue','ticket_overdue','compliance','stock_mismatch','training_expired','stock_risk','complaint_spike'];
+ $generatedTypes=['pos_inactive','settlement_overdue','task_overdue','ticket_overdue','compliance','stock_mismatch','training_expired','contract_expiry','stock_risk','complaint_spike'];
 
  $opsUser=(int)($pdo->query("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code='OPERATIONS' ORDER BY u.id LIMIT 1")->fetchColumn()?:0);
  $assignee=$opsUser?:null;
@@ -187,6 +187,16 @@ function ops_refresh_alerts(PDO $pdo): array {
   $key='training_expired:'.$r['id'];$keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'training_expired','warning','Training expired · '.$r['name'],$r['course_title'].($r['expires_at']?' · '.$r['expires_at']:''),'outlet_training',(int)$r['id'],$assignee);
  }
 
+ $rows=$pdo->query("SELECT oc.id,oc.franchise_id,f.name,oc.contract_type,oc.expiry_date,oc.reminder_days,oc.renewal_status,DATEDIFF(oc.expiry_date,CURDATE()) days_left
+   FROM outlet_contracts oc JOIN franchises f ON f.id=oc.franchise_id
+   WHERE oc.expiry_date IS NOT NULL AND oc.renewal_status NOT IN('renewed','not_required')
+     AND DATEDIFF(oc.expiry_date,CURDATE())<=oc.reminder_days")->fetchAll();
+ foreach($rows as $r){
+  $days=(int)$r['days_left'];$sev=$days<0?'critical':($days<=7?'critical':'warning');$key='contract_expiry:'.$r['id'];
+  $message=$days<0?(abs($days).' days expired'):($days.' days remaining');
+  $keys[]=ops_alert_upsert($pdo,$key,(int)$r['franchise_id'],'contract_expiry',$sev,'Renewal due · '.$r['name'],str_replace('_',' ',$r['contract_type']).' · '.$message,'outlet_contract',(int)$r['id'],$assignee);
+ }
+
  $rows=$pdo->query("SELECT x.franchise_id,f.name,
    SUM(CASE WHEN x.stock_qty<=0 THEN 1 ELSE 0 END) out_count,
    SUM(CASE WHEN x.daily_velocity>0 AND x.stock_qty/x.daily_velocity<7 THEN 1 ELSE 0 END) low_count
@@ -219,7 +229,7 @@ function ops_refresh_alerts(PDO $pdo): array {
 function ops_refresh_alerts_for_franchise(PDO $pdo,int $fid): array {
  outlet_exists($pdo,$fid);
  $keys=[];
- $generatedTypes=['pos_inactive','settlement_overdue','task_overdue','ticket_overdue','compliance','stock_mismatch','training_expired','stock_risk','complaint_spike'];
+ $generatedTypes=['pos_inactive','settlement_overdue','task_overdue','ticket_overdue','compliance','stock_mismatch','training_expired','contract_expiry','stock_risk','complaint_spike'];
  $opsUser=(int)($pdo->query("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code='OPERATIONS' ORDER BY u.id LIMIT 1")->fetchColumn()?:0);
  $assignee=$opsUser?:null;
 
@@ -246,6 +256,12 @@ function ops_refresh_alerts_for_franchise(PDO $pdo,int $fid): array {
 
  $q=$pdo->prepare("SELECT tr.id,tr.course_title,tr.expires_at,f.name FROM outlet_training_records tr JOIN franchises f ON f.id=tr.franchise_id WHERE tr.franchise_id=? AND (tr.status='expired' OR (tr.expires_at IS NOT NULL AND tr.expires_at<CURDATE()))");
  $q->execute([$fid]);foreach($q->fetchAll() as $r){$key='training_expired:'.$r['id'];$keys[]=ops_alert_upsert($pdo,$key,$fid,'training_expired','warning','Training expired · '.$r['name'],$r['course_title'].($r['expires_at']?' · '.$r['expires_at']:''),'outlet_training',(int)$r['id'],$assignee);}
+
+ $q=$pdo->prepare("SELECT oc.id,f.name,oc.contract_type,oc.expiry_date,oc.reminder_days,oc.renewal_status,DATEDIFF(oc.expiry_date,CURDATE()) days_left
+   FROM outlet_contracts oc JOIN franchises f ON f.id=oc.franchise_id
+   WHERE oc.franchise_id=? AND oc.expiry_date IS NOT NULL AND oc.renewal_status NOT IN('renewed','not_required')
+     AND DATEDIFF(oc.expiry_date,CURDATE())<=oc.reminder_days");
+ $q->execute([$fid]);foreach($q->fetchAll() as $r){$days=(int)$r['days_left'];$sev=$days<0?'critical':($days<=7?'critical':'warning');$key='contract_expiry:'.$r['id'];$message=$days<0?(abs($days).' days expired'):($days.' days remaining');$keys[]=ops_alert_upsert($pdo,$key,$fid,'contract_expiry',$sev,'Renewal due · '.$r['name'],str_replace('_',' ',$r['contract_type']).' · '.$message,'outlet_contract',(int)$r['id'],$assignee);}
 
  $q=$pdo->prepare("SELECT f.name,
    SUM(CASE WHEN x.stock_qty<=0 THEN 1 ELSE 0 END) out_count,
@@ -941,6 +957,164 @@ if($route==='operations.stock_count.save' && $method==='POST'){
  out(['ok'=>true,'id'=>$id,'system_qty'=>$system,'physical_qty'=>$physical,'variance_qty'=>$variance,'variance_value'=>$value,'status'=>$status],201);
 }
 
+
+if($route==='operations.round1'){
+ $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+
+ $regional=$pdo->query("SELECT
+   COALESCE(NULLIF(op.division,''),'Unassigned') division,
+   COALESCE(NULLIF(f.district,''),'Unassigned') district,
+   COALESCE(NULLIF(f.upazila,''),'Unassigned') upazila,
+   COUNT(*) total_outlets,
+   SUM(f.status='active') active_outlets,
+   SUM(f.status IN('pipeline','setup')) pipeline_outlets,
+   SUM(f.status IN('watch','critical')) attention_outlets,
+   COALESCE(SUM(s.sales_30d),0) sales_30d,
+   COALESCE(SUM(a.open_alerts),0) open_alerts,
+   COALESCE(SUM(t.overdue_tasks),0) overdue_tasks
+  FROM franchises f
+  LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+  LEFT JOIN (SELECT franchise_id,SUM(gross_amount) sales_30d FROM pos_sales WHERE sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) GROUP BY franchise_id) s ON s.franchise_id=f.id
+  LEFT JOIN (SELECT franchise_id,SUM(status='open') open_alerts FROM operations_alerts GROUP BY franchise_id) a ON a.franchise_id=f.id
+  LEFT JOIN (SELECT franchise_id,SUM(status NOT IN('done','cancelled') AND due_at IS NOT NULL AND due_at<NOW()) overdue_tasks FROM operations_tasks GROUP BY franchise_id) t ON t.franchise_id=f.id
+  WHERE f.status<>'closed'
+  GROUP BY COALESCE(NULLIF(op.division,''),'Unassigned'),COALESCE(NULLIF(f.district,''),'Unassigned'),COALESCE(NULLIF(f.upazila,''),'Unassigned')
+  ORDER BY division,district,upazila")->fetchAll();
+
+ $checkins=$pdo->query("SELECT f.id franchise_id,f.code outlet_code,f.name outlet,
+   COALESCE(NULLIF(op.division,''),'Unassigned') division,f.district,f.upazila,f.status,
+   dc.id checkin_id,dc.checkin_date,COALESCE(dc.opening_status,'pending') opening_status,dc.opened_at,
+   COALESCE(dc.closing_status,'pending') closing_status,dc.closed_at,dc.opening_photo_ref,dc.closing_photo_ref,dc.manager_note,
+   CASE WHEN dc.id IS NULL THEN 'missing' WHEN dc.opening_status IN('late','exception','closed_for_day') THEN 'attention' ELSE 'recorded' END checkin_health
+  FROM franchises f LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+  LEFT JOIN outlet_daily_checkins dc ON dc.franchise_id=f.id AND dc.checkin_date=CURDATE()
+  WHERE f.status IN('active','watch','critical','setup')
+  ORDER BY FIELD(checkin_health,'missing','attention','recorded'),division,f.district,f.name")->fetchAll();
+
+ $visits=$pdo->query("SELECT v.id,v.franchise_id,f.code outlet_code,f.name outlet,
+   COALESCE(NULLIF(op.division,''),'Unassigned') division,f.district,f.upazila,v.visit_type,v.status,v.scheduled_at,
+   v.visitor_user_id,u.name visitor,v.overall_score,v.findings,v.corrective_action,v.evidence_ref,v.next_visit_at,
+   CASE WHEN v.status='scheduled' AND v.scheduled_at<NOW() THEN 'overdue'
+        WHEN v.status='scheduled' AND v.scheduled_at<=DATE_ADD(NOW(),INTERVAL 7 DAY) THEN 'next_7d'
+        ELSE 'planned' END planner_status
+  FROM field_visits v JOIN franchises f ON f.id=v.franchise_id
+  LEFT JOIN outlet_profiles op ON op.franchise_id=f.id LEFT JOIN users u ON u.id=v.visitor_user_id
+  WHERE v.status IN('scheduled','follow_up') OR v.visited_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)
+  ORDER BY FIELD(planner_status,'overdue','next_7d','planned'),v.scheduled_at,v.id DESC LIMIT 300")->fetchAll();
+
+ $contracts=$pdo->query("SELECT oc.id,oc.franchise_id,f.code outlet_code,f.name outlet,
+   COALESCE(NULLIF(op.division,''),'Unassigned') division,f.district,f.upazila,
+   oc.contract_type,oc.document_no,oc.start_date,oc.expiry_date,oc.renewal_status,oc.reminder_days,
+   oc.evidence_ref,oc.owner_note,oc.updated_at,
+   CASE WHEN oc.expiry_date IS NULL THEN NULL ELSE DATEDIFF(oc.expiry_date,CURDATE()) END days_to_expiry,
+   CASE WHEN oc.expiry_date IS NULL OR oc.renewal_status='not_required' THEN 'no_expiry'
+        WHEN oc.expiry_date<CURDATE() AND oc.renewal_status<>'renewed' THEN 'expired'
+        WHEN DATEDIFF(oc.expiry_date,CURDATE())<=7 AND oc.renewal_status<>'renewed' THEN 'critical'
+        WHEN DATEDIFF(oc.expiry_date,CURDATE())<=oc.reminder_days AND oc.renewal_status<>'renewed' THEN 'due'
+        ELSE 'healthy' END renewal_health
+  FROM outlet_contracts oc JOIN franchises f ON f.id=oc.franchise_id
+  LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+  ORDER BY FIELD(renewal_health,'expired','critical','due','healthy','no_expiry'),oc.expiry_date,oc.id DESC LIMIT 400")->fetchAll();
+
+ $launches=$pdo->query("SELECT f.id franchise_id,f.code outlet_code,f.name outlet,
+   COALESCE(NULLIF(op.division,''),'Unassigned') division,f.district,f.upazila,f.status,
+   pl.stage,pl.target_open_date,pl.next_action,pl.blocking_reason,
+   COALESCE(ch.total_items,0) opening_items,COALESCE(ch.done_items,0) opening_done,
+   COALESCE(st.staff_count,0) staff_count,COALESCE(tr.training_complete,0) training_complete,
+   COALESCE(doc.document_count,0) document_count,COALESCE(inv.stock_value,0) stock_value
+  FROM franchises f
+  LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+  LEFT JOIN outlet_pipeline pl ON pl.franchise_id=f.id
+  LEFT JOIN (SELECT franchise_id,COUNT(*) total_items,SUM(completed=1) done_items FROM outlet_checklist_items WHERE checklist_type='opening' GROUP BY franchise_id) ch ON ch.franchise_id=f.id
+  LEFT JOIN (SELECT franchise_id,COUNT(*) staff_count FROM outlet_staff WHERE active=1 GROUP BY franchise_id) st ON st.franchise_id=f.id
+  LEFT JOIN (SELECT franchise_id,SUM(status='completed') training_complete FROM outlet_training_records GROUP BY franchise_id) tr ON tr.franchise_id=f.id
+  LEFT JOIN (SELECT reference_id franchise_id,COUNT(*) document_count FROM documents WHERE reference_type IN('franchise','outlet') GROUP BY reference_id) doc ON doc.franchise_id=f.id
+  LEFT JOIN (SELECT location_id franchise_id,SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty*unit_value WHEN movement_type IN('transfer_out','sale','damage') THEN -qty*unit_value ELSE qty*unit_value END) stock_value FROM inventory_ledger WHERE location_type='franchise' GROUP BY location_id) inv ON inv.franchise_id=f.id
+  WHERE f.status IN('pipeline','setup') OR pl.stage IN('lead','verification','agreement','shop_ready','training','stock_ready','pos_ready','launch')
+  ORDER BY (pl.target_open_date IS NULL),pl.target_open_date,f.name")->fetchAll();
+
+ foreach($launches as &$r){
+  $total=max(1,(int)$r['opening_items']);$check=round(((int)$r['opening_done']/$total)*70,1);
+  $staff=(int)$r['staff_count']>0?10:0;$training=(int)$r['training_complete']>0?10:0;$docs=(int)$r['document_count']>0?5:0;$stock=(float)$r['stock_value']>0?5:0;
+  $r['opening_progress']=round(((int)$r['opening_done']/$total)*100,1);
+  $r['readiness_score']=round($check+$staff+$training+$docs+$stock,1);
+  $blockers=[];
+  if((int)$r['opening_done']<$total)$blockers[]='opening checklist';
+  if((int)$r['staff_count']<=0)$blockers[]='staff';
+  if((int)$r['training_complete']<=0)$blockers[]='training';
+  if((int)$r['document_count']<=0)$blockers[]='documents';
+  if((float)$r['stock_value']<=0)$blockers[]='opening stock';
+  if(trim((string)($r['blocking_reason']??''))!=='')$blockers[]=(string)$r['blocking_reason'];
+  $r['readiness_state']=$r['readiness_score']>=100?'launch_ready':($r['readiness_score']>=70?'near_ready':'blocked');
+  $r['blockers']=implode(' · ',array_values(array_unique($blockers)));
+ } unset($r);
+
+ $metrics=[
+  'regional_units'=>count($regional),
+  'checkins_today'=>count(array_filter($checkins,fn($r)=>!empty($r['checkin_id']))),
+  'missing_checkins'=>count(array_filter($checkins,fn($r)=>empty($r['checkin_id']))),
+  'visits_next_7d'=>count(array_filter($visits,fn($r)=>$r['planner_status']==='next_7d')),
+  'overdue_visits'=>count(array_filter($visits,fn($r)=>$r['planner_status']==='overdue')),
+  'renewals_due'=>count(array_filter($contracts,fn($r)=>in_array($r['renewal_health'],['expired','critical','due'],true))),
+  'launch_outlets'=>count($launches),
+  'launch_ready'=>count(array_filter($launches,fn($r)=>$r['readiness_state']==='launch_ready')),
+ ];
+
+ $assignees=$pdo->query("SELECT u.id,u.name,u.email,r.code role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 AND r.code IN('OWNER','OPERATIONS','REGIONAL') ORDER BY FIELD(r.code,'OPERATIONS','REGIONAL','OWNER'),u.name")->fetchAll();
+ $outlets=$pdo->query("SELECT id,code,name,district,upazila,status FROM franchises WHERE status<>'closed' ORDER BY name")->fetchAll();
+
+ out(['ok'=>true,'metrics'=>$metrics,'regional'=>$regional,'checkins'=>$checkins,'visits'=>$visits,'contracts'=>$contracts,'launches'=>$launches,'assignees'=>$assignees,'outlets'=>$outlets]);
+}
+
+if($route==='operations.checkin.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);$fr=outlet_exists($pdo,$fid);
+ if($fr['status']==='closed')out(['ok'=>false,'code'=>'OUTLET_CLOSED'],422);
+ $date=(string)($body['checkin_date']??date('Y-m-d'));
+ if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$date))out(['ok'=>false,'code'=>'INVALID_CHECKIN_DATE'],422);
+ $open=(string)($body['opening_status']??'pending');$close=(string)($body['closing_status']??'pending');
+ if(!in_array($open,['pending','on_time','late','closed_for_day','exception'],true)||!in_array($close,['pending','on_time','late','exception'],true))out(['ok'=>false,'code'=>'INVALID_CHECKIN_STATUS'],422);
+ $opened=($body['opened_at']??null)?:null;$closed=($body['closed_at']??null)?:null;
+ $q=$pdo->prepare("SELECT id FROM outlet_daily_checkins WHERE franchise_id=? AND checkin_date=? LIMIT 1");$q->execute([$fid,$date]);$id=(int)($q->fetchColumn()?:0);
+ if($id>0){
+  $q=$pdo->prepare("UPDATE outlet_daily_checkins SET opening_status=?,opened_at=?,closing_status=?,closed_at=?,opening_photo_ref=?,closing_photo_ref=?,manager_note=?,updated_by=? WHERE id=?");
+  $q->execute([$open,$opened,$close,$closed,$body['opening_photo_ref']??null,$body['closing_photo_ref']??null,$body['manager_note']??null,(int)$u['id'],$id]);
+ }else{
+  $q=$pdo->prepare("INSERT INTO outlet_daily_checkins(franchise_id,checkin_date,opening_status,opened_at,closing_status,closed_at,opening_photo_ref,closing_photo_ref,manager_note,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+  $q->execute([$fid,$date,$open,$opened,$close,$closed,$body['opening_photo_ref']??null,$body['closing_photo_ref']??null,$body['manager_note']??null,(int)$u['id'],(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'daily_checkin','Daily outlet check-in',$date.' | opening '.$open.' | closing '.$close,'outlet_daily_checkin',$id,['opening_status'=>$open,'closing_status'=>$close]);
+ audit($pdo,(int)$u['id'],'daily_checkin_save','franchise',(string)$fid,['checkin_id'=>$id,'checkin_date'=>$date,'opening_status'=>$open,'closing_status'=>$close]);
+ out(['ok'=>true,'id'=>$id,'checkin_date'=>$date,'opening_status'=>$open,'closing_status'=>$close]);
+}
+
+if($route==='operations.contract.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $type=(string)($body['contract_type']??'other');$types=['franchise_agreement','lease','trade_license','food_license','fire_safety','tax_vat','other'];
+ if(!in_array($type,$types,true))out(['ok'=>false,'code'=>'INVALID_CONTRACT_TYPE'],422);
+ $start=($body['start_date']??null)?:null;$expiry=($body['expiry_date']??null)?:null;$reminder=max(1,min(365,(int)($body['reminder_days']??30)));
+ $requested=(string)($body['renewal_status']??'active');$allowed=['active','due','renewing','renewed','expired','not_required'];
+ if(!in_array($requested,$allowed,true))out(['ok'=>false,'code'=>'INVALID_RENEWAL_STATUS'],422);
+ $status=$requested;
+ if($expiry && !in_array($requested,['renewing','renewed','not_required'],true)){
+  $days=(int)floor((strtotime($expiry)-strtotime(date('Y-m-d')))/86400);
+  $status=$days<0?'expired':($days<=$reminder?'due':'active');
+ }
+ $id=(int)($body['id']??0);
+ if($id>0){
+  $q=$pdo->prepare("UPDATE outlet_contracts SET contract_type=?,document_no=?,start_date=?,expiry_date=?,renewal_status=?,reminder_days=?,evidence_ref=?,owner_note=?,updated_by=? WHERE id=? AND franchise_id=?");
+  $q->execute([$type,$body['document_no']??null,$start,$expiry,$status,$reminder,$body['evidence_ref']??null,$body['owner_note']??null,(int)$u['id'],$id,$fid]);
+  if($q->rowCount()===0){$q=$pdo->prepare("SELECT id FROM outlet_contracts WHERE id=? AND franchise_id=?");$q->execute([$id,$fid]);if(!$q->fetchColumn())out(['ok'=>false,'code'=>'CONTRACT_NOT_FOUND'],404);}
+ }else{
+  $q=$pdo->prepare("INSERT INTO outlet_contracts(franchise_id,contract_type,document_no,start_date,expiry_date,renewal_status,reminder_days,evidence_ref,owner_note,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+  $q->execute([$fid,$type,$body['document_no']??null,$start,$expiry,$status,$reminder,$body['evidence_ref']??null,$body['owner_note']??null,(int)$u['id'],(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'contract','Contract / renewal updated',str_replace('_',' ',$type).' | '.($expiry?:'no expiry').' | '.$status,'outlet_contract',$id,['contract_type'=>$type,'expiry_date'=>$expiry,'renewal_status'=>$status]);
+ audit($pdo,(int)$u['id'],'contract_save','franchise',(string)$fid,['contract_id'=>$id,'contract_type'=>$type,'expiry_date'=>$expiry,'renewal_status'=>$status]);
+ out(['ok'=>true,'id'=>$id,'renewal_status'=>$status,'expiry_date'=>$expiry]);
+}
+
 if($route==='operations.workboard'){
  $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
 
@@ -1233,7 +1407,11 @@ if($route==='operations.dashboard'){
    (SELECT COUNT(*) FROM outlet_training_records WHERE status IN('pending','scheduled','expired') OR (expires_at IS NOT NULL AND expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))) training_attention,
    (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing,
    (SELECT COUNT(*) FROM operations_alerts WHERE status='open') open_alerts,
-   (SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical') critical_alerts")->fetch();
+   (SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical') critical_alerts,
+   (SELECT COUNT(*) FROM outlet_daily_checkins WHERE checkin_date=CURDATE()) checkins_today,
+   (SELECT COUNT(*) FROM franchises f2 WHERE f2.status IN('active','watch','critical','setup') AND NOT EXISTS(SELECT 1 FROM outlet_daily_checkins dc WHERE dc.franchise_id=f2.id AND dc.checkin_date=CURDATE())) missing_checkins,
+   (SELECT COUNT(*) FROM outlet_contracts oc WHERE oc.expiry_date IS NOT NULL AND oc.renewal_status NOT IN('renewed','not_required') AND DATEDIFF(oc.expiry_date,CURDATE())<=oc.reminder_days) renewals_due,
+   (SELECT COUNT(*) FROM outlet_pipeline pl2 JOIN franchises f2 ON f2.id=pl2.franchise_id WHERE f2.status IN('pipeline','setup') AND pl2.stage NOT IN('live','closed')) launch_rooms")->fetch();
 
  $currentSales=(float)($current['sales']??0);
  $previousSales=(float)($previous['sales']??0);
@@ -1270,6 +1448,10 @@ if($route==='operations.dashboard'){
      'active_marketing'=>(int)($work['active_marketing']??0),
      'open_alerts'=>(int)($work['open_alerts']??0),
      'critical_alerts'=>(int)($work['critical_alerts']??0),
+     'checkins_today'=>(int)($work['checkins_today']??0),
+     'missing_checkins'=>(int)($work['missing_checkins']??0),
+     'renewals_due'=>(int)($work['renewals_due']??0),
+     'launch_rooms'=>(int)($work['launch_rooms']??0),
    ],
    'outlets'=>$outlets,
    'low_performers'=>$low,

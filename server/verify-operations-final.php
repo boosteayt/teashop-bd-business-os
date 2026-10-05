@@ -20,7 +20,7 @@ $tables=[
  'outlet_profiles','outlet_pipeline','outlet_checklist_items','outlet_staff','outlet_training_records','outlet_timeline',
  'operations_tasks','field_visits','support_tickets','support_ticket_updates','outlet_communications','outlet_compliance_checks','marketing_executions',
  'outlet_sales_targets','outlet_inventory_policies','outlet_stock_counts',
- 'operations_alerts','operations_report_snapshots','performance_records','notifications','audit_logs'
+ 'operations_alerts','operations_report_snapshots','outlet_daily_checkins','outlet_contracts','performance_records','notifications','audit_logs'
 ];
 $missing=[];
 $q=$p->prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?");
@@ -40,7 +40,12 @@ $requiredMarkers=[
  "$route==='operations.network.report'",
  "$route==='operations.security.audit'",
  'OPENING_CHECKLIST_INCOMPLETE',
- 'CLOSURE_CHECKLIST_INCOMPLETE'
+ 'CLOSURE_CHECKLIST_INCOMPLETE',
+ 'function OperationsRound1View',
+ 'operations.round1',
+ 'operations.checkin.save',
+ 'operations.contract.save',
+ 'contract_expiry'
 ];
 $missingMarkers=[];foreach($requiredMarkers as $m)if(strpos($source,$m)===false)$missingMarkers[]=$m;
 
