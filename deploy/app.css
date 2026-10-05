@@ -636,3 +636,16 @@ td b{font-size:9.5px}
 .opsTabs button.active:nth-last-child(-n+4){border-style:solid}
 .tablewrap td .actionRow{min-width:118px}
 @media(max-width:720px){.tablewrap table{min-width:980px}}
+
+
+/* operations-patch4-final */
+.finalPeriod{display:flex;justify-content:flex-end;margin:0 0 10px}
+.finalPeriod .field{max-width:190px}
+.performanceWeights{grid-template-columns:repeat(4,minmax(0,1fr))}
+.pnlStrip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:6px 0 12px}
+.pnlStrip>div{border:1px solid #e2e9e5;background:#fbfcfb;border-radius:10px;padding:11px}
+.pnlStrip span,.pnlStrip b{display:block}.pnlStrip span{font-size:7.5px;text-transform:uppercase;letter-spacing:.04em;color:#839188}.pnlStrip b{font-size:13px;color:#173126;margin-top:4px}
+.securityGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.securityGrid>div{border:1px solid #e1e8e4;border-radius:10px;padding:13px;background:#fbfcfb}.securityGrid b{display:block;font-size:10px;color:#183729;margin-bottom:5px}.securityGrid p{margin:0;font-size:9px;line-height:1.55;color:#687b70}
+.opsFinalStats .stat:nth-child(1){border-style:solid}
+@media(max-width:1100px){.performanceWeights,.pnlStrip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:680px){.performanceWeights,.pnlStrip,.securityGrid{grid-template-columns:1fr}.finalPeriod{justify-content:stretch}.finalPeriod .field{max-width:none;width:100%}}
