@@ -345,6 +345,106 @@ if($route==='inventory.transfer.create' && $method==='POST'){
  }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'TRANSFER_FAILED'],422);}
 }
 
+
+if($route==='operations.dashboard'){
+ $u=auth();
+ if(!in_array($u['role'],['OWNER','OPERATIONS'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+
+ $today=date('Y-m-d');
+ $monthStart=date('Y-m-01');
+ $prevStart=date('Y-m-01',strtotime('first day of previous month'));
+ $prevEnd=date('Y-m-t',strtotime('last day of previous month'));
+
+ $network=$pdo->query("SELECT
+   COUNT(*) total_outlets,
+   SUM(status='active') active_outlets,
+   SUM(status IN('pipeline','setup')) pipeline_outlets,
+   SUM(status IN('watch','critical')) attention_outlets
+   FROM franchises WHERE status<>'closed'")->fetch();
+
+ $q=$pdo->prepare("SELECT
+   COALESCE(SUM(gross_amount),0) sales,
+   COALESCE(SUM(earned_margin),0) earned_margin,
+   COUNT(*) receipts
+   FROM pos_sales WHERE DATE(sold_at) BETWEEN ? AND ?");
+ $q->execute([$monthStart,$today]); $current=$q->fetch();
+
+ $q=$pdo->prepare("SELECT COALESCE(SUM(gross_amount),0) sales,COUNT(*) receipts
+   FROM pos_sales WHERE DATE(sold_at) BETWEEN ? AND ?");
+ $q->execute([$prevStart,$prevEnd]); $previous=$q->fetch();
+
+ $unsettled=$pdo->query("SELECT
+   COUNT(*) rows_count,
+   COALESCE(SUM(net_payable),0) amount
+   FROM settlements WHERE status IN('draft','review','approved','locked')")->fetch();
+
+ $outlets=$pdo->query("SELECT f.id,f.code,f.name,f.district,f.upazila,f.status,f.margin_tier,f.margin_percent,
+   COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) sales_30d,
+   COALESCE((SELECT COUNT(*) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) receipts_30d,
+   (SELECT MAX(ps.sold_at) FROM pos_sales ps WHERE ps.franchise_id=f.id) last_sale_at,
+   COALESCE((SELECT SUM(
+      CASE
+       WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty*il.unit_value
+       WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty*il.unit_value
+       ELSE il.qty*il.unit_value
+      END
+    ) FROM inventory_ledger il WHERE il.location_type='franchise' AND il.location_id=f.id),0) stock_value,
+   COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),
+     CASE WHEN f.status='critical' THEN 'critical' WHEN f.status='watch' THEN 'watch' WHEN f.status='active' THEN 'healthy' ELSE 'new' END) health,
+   COALESCE((SELECT oh.total_score FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),0) health_score
+   FROM franchises f WHERE f.status<>'closed'
+   ORDER BY sales_30d DESC,f.name LIMIT 150")->fetchAll();
+
+ $low=array_values(array_slice(array_filter($outlets,fn($r)=>$r['status']==='active'),-10));
+ usort($low,fn($a,$b)=>(float)$a['sales_30d']<=>(float)$b['sales_30d']);
+
+ $stockGaps=array_values(array_filter($outlets,fn($r)=>$r['status']==='active' && (float)$r['stock_value']<=0));
+ usort($stockGaps,fn($a,$b)=>strcmp((string)$a['name'],(string)$b['name']));
+ $stockGaps=array_slice($stockGaps,0,10);
+
+ $settlements=$pdo->query("SELECT s.id,f.code,f.name outlet,s.period_start,s.period_end,s.verified_sales,s.earned_margin,s.net_payable,s.status
+   FROM settlements s JOIN franchises f ON f.id=s.franchise_id
+   WHERE s.status IN('draft','review','approved','locked')
+   ORDER BY s.period_end DESC,s.net_payable DESC LIMIT 12")->fetchAll();
+
+ $performance=$pdo->query("SELECT pr.id,pr.period_start,pr.period_end,pr.total_score,pr.sales_growth_score,pr.stock_rotation_score,pr.outlet_health_score,
+   pr.settlement_score,pr.retention_score,pr.compliance_score,pr.performance_share_percent,pr.performance_share_amount,pr.status
+   FROM performance_records pr
+   WHERE pr.role_code='OPERATIONS'
+   ORDER BY pr.period_end DESC,pr.id DESC LIMIT 1")->fetch() ?: null;
+
+ $currentSales=(float)($current['sales']??0);
+ $previousSales=(float)($previous['sales']??0);
+ $growth=$previousSales>0?round((($currentSales-$previousSales)/$previousSales)*100,2):null;
+
+ out([
+   'ok'=>true,
+   'period'=>['from'=>$monthStart,'to'=>$today,'previous_from'=>$prevStart,'previous_to'=>$prevEnd],
+   'network'=>[
+     'total_outlets'=>(int)($network['total_outlets']??0),
+     'active_outlets'=>(int)($network['active_outlets']??0),
+     'pipeline_outlets'=>(int)($network['pipeline_outlets']??0),
+     'attention_outlets'=>(int)($network['attention_outlets']??0),
+   ],
+   'sales'=>[
+     'current'=>$currentSales,
+     'previous'=>$previousSales,
+     'growth_percent'=>$growth,
+     'receipts'=>(int)($current['receipts']??0),
+     'earned_margin'=>(float)($current['earned_margin']??0),
+   ],
+   'settlement'=>[
+     'open_count'=>(int)($unsettled['rows_count']??0),
+     'open_amount'=>(float)($unsettled['amount']??0),
+   ],
+   'outlets'=>$outlets,
+   'low_performers'=>$low,
+   'stock_gaps'=>$stockGaps,
+   'settlements_due'=>$settlements,
+   'performance'=>$performance
+ ]);
+}
+
 if($route==='dashboard'){
  auth();
  $sales=(float)$pdo->query('SELECT COALESCE(SUM(gross_amount),0) FROM pos_sales')->fetchColumn();
