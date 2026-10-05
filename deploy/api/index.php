@@ -45,6 +45,50 @@ function audit(PDO $pdo,?int $uid,string $action,string $type,?string $id=null,a
  $q->execute([$uid,$action,$type,$id,json_encode($after,JSON_UNESCAPED_UNICODE),$_SERVER['REMOTE_ADDR']??null]);
 }
 
+function outlet_ops_user(array $roles=['OWNER','OPERATIONS']): array {
+ $u=auth();
+ if(!in_array((string)($u['role']??''),$roles,true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ return $u;
+}
+function outlet_checklist_defaults(string $type): array {
+ if($type==='opening') return [
+  ['agreement_signed','Franchise agreement signed',10],
+  ['premises_confirmed','Premises / lease confirmed',20],
+  ['branding_ready','Branding & decoration ready',30],
+  ['utilities_ready','Electricity / internet / counter ready',40],
+  ['staff_hired','Outlet staff hired',50],
+  ['training_complete','Required staff training completed',60],
+  ['pos_ready','POS login / device / connectivity ready',70],
+  ['opening_stock_received','Opening stock received',80],
+  ['stock_reconciled','Opening stock reconciled in system',90],
+  ['launch_approved','Launch approval completed',100],
+ ];
+ return [
+  ['closure_approved','Closure / suspension decision approved',10],
+  ['sales_stopped','POS sales stopped at effective time',20],
+  ['stock_counted','Physical stock counted',30],
+  ['stock_returned','Approved stock returned / transferred',40],
+  ['dues_reconciled','Dues and settlement reconciled',50],
+  ['pos_access_closed','Outlet POS access disabled / reassigned',60],
+  ['brand_assets_removed','Brand assets / signage recovery completed',70],
+  ['final_handover','Final documents and handover completed',80],
+ ];
+}
+function ensure_outlet_checklist(PDO $pdo,int $fid,string $type): void {
+ if(!in_array($type,['opening','closure'],true)) return;
+ $q=$pdo->prepare('INSERT IGNORE INTO outlet_checklist_items(franchise_id,checklist_type,item_code,item_label,sort_order,required) VALUES(?,?,?,?,?,1)');
+ foreach(outlet_checklist_defaults($type) as [$code,$label,$sort]) $q->execute([$fid,$type,$code,$label,$sort]);
+}
+function outlet_timeline(PDO $pdo,int $fid,?int $uid,string $event,string $title,string $detail='',?string $refType=null,?int $refId=null,array $payload=[]): void {
+ $q=$pdo->prepare('INSERT INTO outlet_timeline(franchise_id,event_type,title,detail,reference_type,reference_id,payload_json,created_by) VALUES(?,?,?,?,?,?,?,?)');
+ $q->execute([$fid,$event,$title,$detail?:null,$refType,$refId,$payload?json_encode($payload,JSON_UNESCAPED_UNICODE):null,$uid]);
+}
+function outlet_exists(PDO $pdo,int $fid): array {
+ $q=$pdo->prepare('SELECT * FROM franchises WHERE id=? LIMIT 1');$q->execute([$fid]);$row=$q->fetch();
+ if(!$row) out(['ok'=>false,'code'=>'FRANCHISE_NOT_FOUND'],404);
+ return $row;
+}
+
 if($route==='health') out(['ok'=>true,'service'=>'Tea Shop BD Business OS API','database'=>'connected']);
 
 if($route==='bootstrap.users' && $method==='POST'){
@@ -357,10 +401,10 @@ if($route==='operations.dashboard'){
 
  $network=$pdo->query("SELECT
    COUNT(*) total_outlets,
-   SUM(status='active') active_outlets,
-   SUM(status IN('pipeline','setup')) pipeline_outlets,
-   SUM(status IN('watch','critical')) attention_outlets
-   FROM franchises WHERE status<>'closed'")->fetch();
+   SUM(f.status='active') active_outlets,
+   SUM(f.status IN('pipeline','setup')) pipeline_outlets,
+   SUM(CASE WHEN COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),'new') IN('watch','critical') THEN 1 ELSE 0 END) attention_outlets
+   FROM franchises f WHERE f.status<>'closed'")->fetch();
 
  $q=$pdo->prepare("SELECT
    COALESCE(SUM(gross_amount),0) sales,
@@ -379,6 +423,8 @@ if($route==='operations.dashboard'){
    FROM settlements WHERE status IN('draft','review','approved','locked')")->fetch();
 
  $outlets=$pdo->query("SELECT f.id,f.code,f.name,f.district,f.upazila,f.status,f.margin_tier,f.margin_percent,
+   op.division,op.target_open_date,op.operational_state,
+   pl.stage pipeline_stage,pl.next_action,pl.blocking_reason,pl.updated_at pipeline_updated_at,
    COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) sales_30d,
    COALESCE((SELECT COUNT(*) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) receipts_30d,
    (SELECT MAX(ps.sold_at) FROM pos_sales ps WHERE ps.franchise_id=f.id) last_sale_at,
@@ -392,7 +438,10 @@ if($route==='operations.dashboard'){
    COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),
      CASE WHEN f.status='critical' THEN 'critical' WHEN f.status='watch' THEN 'watch' WHEN f.status='active' THEN 'healthy' ELSE 'new' END) health,
    COALESCE((SELECT oh.total_score FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),0) health_score
-   FROM franchises f WHERE f.status<>'closed'
+   FROM franchises f
+   LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+   LEFT JOIN outlet_pipeline pl ON pl.franchise_id=f.id
+   WHERE f.status<>'closed'
    ORDER BY sales_30d DESC,f.name LIMIT 150")->fetchAll();
 
  $low=array_values(array_slice(array_filter($outlets,fn($r)=>$r['status']==='active'),-10));
@@ -478,18 +527,238 @@ if($route==='settlement.summary'){
  $rows=$pdo->query("SELECT DATE_FORMAT(sold_at,'%Y-%m') period,COUNT(*) receipts,SUM(gross_amount) sales,SUM(earned_margin) margin FROM pos_sales GROUP BY DATE_FORMAT(sold_at,'%Y-%m') ORDER BY period DESC LIMIT 24")->fetchAll();
  out(['ok'=>true,'periods'=>$rows]);
 }
+
 if($route==='franchises'){
  auth();
- $rows=$pdo->query('SELECT id,code,name,district,upazila,status,margin_mode,margin_tier,margin_percent,opened_at FROM franchises ORDER BY id DESC')->fetchAll();
+ $rows=$pdo->query("SELECT f.id,f.code,f.name,f.district,f.upazila,f.address,f.status,f.margin_mode,f.margin_tier,f.margin_percent,f.opened_at,
+   op.owner_name,op.owner_phone,op.owner_email,op.division,op.territory_code,op.target_open_date,op.operational_state,op.suspended_at,
+   pl.stage pipeline_stage,pl.next_action,pl.blocking_reason,pl.updated_at pipeline_updated_at,
+   COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),'new') health,
+   COALESCE((SELECT oh.total_score FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),0) health_score,
+   COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) sales_30d,
+   COALESCE((SELECT SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty*il.unit_value WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty*il.unit_value ELSE il.qty*il.unit_value END) FROM inventory_ledger il WHERE il.location_type='franchise' AND il.location_id=f.id),0) stock_value
+   FROM franchises f
+   LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+   LEFT JOIN outlet_pipeline pl ON pl.franchise_id=f.id
+   ORDER BY f.id DESC")->fetchAll();
  out(['ok'=>true,'franchises'=>$rows]);
 }
+
 if($route==='franchise.create' && $method==='POST'){
  csrf(); $u=owner();
- $q=$pdo->prepare('INSERT INTO franchises(code,name,district,upazila,status,margin_mode,margin_tier,margin_percent,opened_at) VALUES(?,?,?,?,?,?,?,?,?)');
- $q->execute([$body['code'],$body['name'],$body['district']??null,$body['upazila']??null,'active',$body['margin_mode']??'tier',$body['margin_tier']??'Starter',(float)($body['margin_percent']??25),$body['opened_at']??date('Y-m-d')]);
- $id=(string)$pdo->lastInsertId(); audit($pdo,(int)$u['id'],'create','franchise',$id,$body);
+ $code=trim((string)($body['code']??''));$name=trim((string)($body['name']??''));
+ if($code===''||$name==='') out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);
+ $pct=(float)($body['margin_percent']??25);
+ if($pct<=0||$pct>=100) out(['ok'=>false,'code'=>'INVALID_MARGIN'],422);
+ $tier=(string)($body['margin_tier']??'Starter');if(!in_array($tier,['Starter','Growth','Elite','Manual'],true))$tier='Starter';
+ $mode=$tier==='Manual'?'manual':'tier';
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare("INSERT INTO franchises(code,name,district,upazila,address,status,margin_mode,margin_tier,margin_percent,opened_at) VALUES(?,?,?,?,?,'pipeline',?,?,?,NULL)");
+  $q->execute([$code,$name,$body['district']??null,$body['upazila']??null,$body['address']??null,$mode,$tier,$pct]);
+  $id=(int)$pdo->lastInsertId();
+  $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,owner_name,owner_phone,owner_email,division,territory_code,shop_type,shop_size_sqft,agreement_no,agreement_date,lease_start,lease_end,target_open_date,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  $q->execute([$id,$body['owner_name']??null,$body['owner_phone']??null,$body['owner_email']??null,$body['division']??null,$body['territory_code']??null,$body['shop_type']??null,$body['shop_size_sqft']??null,$body['agreement_no']??null,$body['agreement_date']??null,$body['lease_start']??null,$body['lease_end']??null,$body['target_open_date']??null,(int)$u['id']]);
+  $q=$pdo->prepare("INSERT INTO outlet_pipeline(franchise_id,stage,target_open_date,next_action,updated_by) VALUES(?,'lead',?,?,?)");
+  $q->execute([$id,$body['target_open_date']??null,$body['next_action']??'Verify franchise application and premises',(int)$u['id']]);
+  ensure_outlet_checklist($pdo,$id,'opening');ensure_outlet_checklist($pdo,$id,'closure');
+  outlet_timeline($pdo,$id,(int)$u['id'],'created','Outlet record created','New franchise entered the opening pipeline','franchise',$id,['stage'=>'lead']);
+  $pdo->commit();
+  audit($pdo,(int)$u['id'],'create','franchise',(string)$id,['code'=>$code,'name'=>$name,'stage'=>'lead','margin_percent'=>$pct]);
+  out(['ok'=>true,'id'=>$id],201);
+ }catch(Throwable $e){
+  if($pdo->inTransaction())$pdo->rollBack();
+  out(['ok'=>false,'code'=>'FRANCHISE_CREATE_FAILED'],422);
+ }
+}
+
+if($route==='franchise.360'){
+ auth();$fid=(int)($_GET['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);
+ $fr=outlet_exists($pdo,$fid);
+
+ $q=$pdo->prepare("SELECT * FROM outlet_profiles WHERE franchise_id=?");$q->execute([$fid]);$profile=$q->fetch()?:[];
+ $q=$pdo->prepare("SELECT * FROM outlet_pipeline WHERE franchise_id=?");$q->execute([$fid]);$pipeline=$q->fetch()?:null;
+ $q=$pdo->prepare("SELECT * FROM outlet_checklist_items WHERE franchise_id=? ORDER BY checklist_type,sort_order,id");$q->execute([$fid]);$check=$q->fetchAll();
+ $opening=array_values(array_filter($check,fn($r)=>$r['checklist_type']==='opening'));
+ $closure=array_values(array_filter($check,fn($r)=>$r['checklist_type']==='closure'));
+
+ $q=$pdo->prepare("SELECT id,name,staff_role,phone,email,joined_at,active,notes,created_at FROM outlet_staff WHERE franchise_id=? ORDER BY active DESC,id DESC");$q->execute([$fid]);$staff=$q->fetchAll();
+ $q=$pdo->prepare("SELECT tr.id,tr.outlet_staff_id,os.name staff_name,tr.course_code,tr.course_title,tr.status,tr.scheduled_at,tr.completed_at,tr.expires_at,tr.trainer,tr.certificate_ref,tr.notes
+   FROM outlet_training_records tr LEFT JOIN outlet_staff os ON os.id=tr.outlet_staff_id WHERE tr.franchise_id=? ORDER BY tr.id DESC");$q->execute([$fid]);$training=$q->fetchAll();
+ $q=$pdo->prepare("SELECT id,document_type,title,file_path,status,created_at FROM documents WHERE reference_type IN('franchise','outlet') AND reference_id=? ORDER BY id DESC");$q->execute([$fid]);$documents=$q->fetchAll();
+ $q=$pdo->prepare("SELECT id,sales_score,stock_score,settlement_score,compliance_score,total_score,health,notes,checked_at FROM outlet_health_checks WHERE franchise_id=? ORDER BY checked_at DESC,id DESC LIMIT 24");$q->execute([$fid]);$health=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT COALESCE(SUM(gross_amount),0) sales_30d,COALESCE(SUM(earned_margin),0) margin_30d,COUNT(*) receipts_30d,MAX(sold_at) last_sale_at FROM pos_sales WHERE franchise_id=? AND sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)");
+ $q->execute([$fid]);$sales=$q->fetch();
+ $q=$pdo->prepare("SELECT pp.id pack_id,p.name product,pp.grams,pp.mrp,
+   SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) qty
+   FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id JOIN products p ON p.id=pp.product_id
+   WHERE il.location_type='franchise' AND il.location_id=? GROUP BY pp.id,p.name,pp.grams,pp.mrp HAVING ABS(qty)>0.0001 ORDER BY p.name,pp.grams");
+ $q->execute([$fid]);$stock=$q->fetchAll();
+ $stockValue=0.0;foreach($stock as $s)$stockValue+=(float)$s['qty']*(float)$s['mrp'];
+
+ $q=$pdo->prepare("SELECT id,period_start,period_end,verified_sales,earned_margin,net_payable,status,locked_at FROM settlements WHERE franchise_id=? ORDER BY period_end DESC,id DESC LIMIT 12");$q->execute([$fid]);$settlements=$q->fetchAll();
+
+ $events=[];
+ $q=$pdo->prepare("SELECT occurred_at,event_type,title,detail,reference_type,reference_id FROM outlet_timeline WHERE franchise_id=? ORDER BY occurred_at DESC,id DESC LIMIT 150");$q->execute([$fid]);
+ foreach($q->fetchAll() as $e)$events[]=$e;
+ $q=$pdo->prepare("SELECT sold_at occurred_at,'pos_sale' event_type,CONCAT('POS sale · ',receipt_no) title,CONCAT('Verified ',gross_amount,' · margin ',earned_margin) detail,'pos_sale' reference_type,id reference_id FROM pos_sales WHERE franchise_id=? ORDER BY id DESC LIMIT 100");$q->execute([$fid]);foreach($q->fetchAll() as $e)$events[]=$e;
+ $q=$pdo->prepare("SELECT created_at occurred_at,'stock' event_type,CONCAT('Stock ',movement_type) title,CONCAT(qty,' units · value ',unit_value) detail,reference_type,reference_id FROM inventory_ledger WHERE location_type='franchise' AND location_id=? ORDER BY id DESC LIMIT 100");$q->execute([$fid]);foreach($q->fetchAll() as $e)$events[]=$e;
+ $q=$pdo->prepare("SELECT period_end occurred_at,'settlement' event_type,CONCAT('Settlement ',status) title,CONCAT('Verified ',verified_sales,' · payable ',net_payable) detail,'settlement' reference_type,id reference_id FROM settlements WHERE franchise_id=? ORDER BY id DESC LIMIT 50");$q->execute([$fid]);foreach($q->fetchAll() as $e)$events[]=$e;
+ $q=$pdo->prepare("SELECT checked_at occurred_at,'health' event_type,CONCAT('Outlet health · ',health) title,CONCAT('Score ',total_score) detail,'outlet_health' reference_type,id reference_id FROM outlet_health_checks WHERE franchise_id=? ORDER BY id DESC LIMIT 50");$q->execute([$fid]);foreach($q->fetchAll() as $e)$events[]=$e;
+ usort($events,fn($a,$b)=>strcmp((string)$b['occurred_at'],(string)$a['occurred_at']));
+
+ $openingDone=count(array_filter($opening,fn($r)=>(int)$r['completed']===1));
+ $closureDone=count(array_filter($closure,fn($r)=>(int)$r['completed']===1));
+ out(['ok'=>true,'franchise'=>$fr,'profile'=>$profile,'pipeline'=>$pipeline,
+  'checklists'=>['opening'=>$opening,'closure'=>$closure,'opening_progress'=>count($opening)?round($openingDone/count($opening)*100):0,'closure_progress'=>count($closure)?round($closureDone/count($closure)*100):0],
+  'staff'=>$staff,'training'=>$training,'documents'=>$documents,'health_history'=>$health,'health_latest'=>$health[0]??null,
+  'sales'=>$sales,'stock'=>$stock,'stock_value'=>round($stockValue,2),'settlements'=>$settlements,'timeline'=>array_slice($events,0,250)]);
+}
+
+if($route==='franchise.profile.update' && $method==='POST'){
+ csrf();$u=outlet_ops_user();$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);
+ $before=outlet_exists($pdo,$fid);
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare("UPDATE franchises SET name=?,district=?,upazila=?,address=? WHERE id=?");
+  $q->execute([trim((string)($body['name']??$before['name'])),$body['district']??$before['district'],$body['upazila']??$before['upazila'],$body['address']??$before['address'],$fid]);
+  $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,owner_name,owner_phone,owner_email,division,territory_code,shop_type,shop_size_sqft,agreement_no,agreement_date,lease_start,lease_end,target_open_date,updated_by)
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE owner_name=VALUES(owner_name),owner_phone=VALUES(owner_phone),owner_email=VALUES(owner_email),division=VALUES(division),territory_code=VALUES(territory_code),shop_type=VALUES(shop_type),shop_size_sqft=VALUES(shop_size_sqft),agreement_no=VALUES(agreement_no),agreement_date=VALUES(agreement_date),lease_start=VALUES(lease_start),lease_end=VALUES(lease_end),target_open_date=VALUES(target_open_date),updated_by=VALUES(updated_by)");
+  $q->execute([$fid,$body['owner_name']??null,$body['owner_phone']??null,$body['owner_email']??null,$body['division']??null,$body['territory_code']??null,$body['shop_type']??null,($body['shop_size_sqft']??null) ?: null,$body['agreement_no']??null,($body['agreement_date']??null) ?: null,($body['lease_start']??null) ?: null,($body['lease_end']??null) ?: null,($body['target_open_date']??null) ?: null,(int)$u['id']]);
+  outlet_timeline($pdo,$fid,(int)$u['id'],'profile','Outlet profile updated','Owner, territory, agreement or premises profile updated','franchise',$fid);
+  $pdo->commit();audit($pdo,(int)$u['id'],'update_profile','franchise',(string)$fid,['name'=>$body['name']??$before['name'],'division'=>$body['division']??null,'district'=>$body['district']??$before['district'],'upazila'=>$body['upazila']??$before['upazila']]);
+  out(['ok'=>true]);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'PROFILE_UPDATE_FAILED'],422);}
+}
+
+if($route==='franchise.pipeline.update' && $method==='POST'){
+ csrf();$u=outlet_ops_user();$fid=(int)($body['franchise_id']??0);$stage=(string)($body['stage']??'');
+ $stages=['lead','verification','agreement','shop_ready','training','stock_ready','pos_ready','launch','live','suspended','closed'];
+ if($fid<=0||!in_array($stage,$stages,true))out(['ok'=>false,'code'=>'INVALID_PIPELINE'],422);
+ $fr=outlet_exists($pdo,$fid);
+ $q=$pdo->prepare("SELECT operational_state FROM outlet_profiles WHERE franchise_id=?");$q->execute([$fid]);$state=(string)($q->fetchColumn()?:'normal');
+ if(in_array($stage,['suspended','closed'],true)&&$u['role']!=='OWNER')out(['ok'=>false,'code'=>'OWNER_APPROVAL_REQUIRED'],403);
+ if($state==='suspended'&&$stage==='live'&&$u['role']!=='OWNER')out(['ok'=>false,'code'=>'OWNER_APPROVAL_REQUIRED'],403);
+ if($stage==='live'){
+  $q=$pdo->prepare("SELECT COUNT(*) FROM outlet_checklist_items WHERE franchise_id=? AND checklist_type='opening' AND required=1 AND completed=0");$q->execute([$fid]);$remaining=(int)$q->fetchColumn();
+  if($remaining>0)out(['ok'=>false,'code'=>'OPENING_CHECKLIST_INCOMPLETE','remaining'=>$remaining],422);
+ }
+ if($stage==='closed'){
+  $q=$pdo->prepare("SELECT COUNT(*) FROM outlet_checklist_items WHERE franchise_id=? AND checklist_type='closure' AND required=1 AND completed=0");$q->execute([$fid]);$remaining=(int)$q->fetchColumn();
+  if($remaining>0)out(['ok'=>false,'code'=>'CLOSURE_CHECKLIST_INCOMPLETE','remaining'=>$remaining],422);
+ }
+
+ $pdo->beginTransaction();
+ try{
+  $q=$pdo->prepare("INSERT INTO outlet_pipeline(franchise_id,stage,target_open_date,next_action,blocking_reason,assigned_user_id,updated_by)
+   VALUES(?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE stage=VALUES(stage),target_open_date=VALUES(target_open_date),next_action=VALUES(next_action),blocking_reason=VALUES(blocking_reason),assigned_user_id=VALUES(assigned_user_id),updated_by=VALUES(updated_by)");
+  $q->execute([$fid,$stage,($body['target_open_date']??null) ?: null,$body['next_action']??null,$body['blocking_reason']??null,($body['assigned_user_id']??null) ?: null,(int)$u['id']]);
+
+  $status=in_array($stage,['lead','verification','agreement'],true)?'pipeline':(in_array($stage,['shop_ready','training','stock_ready','pos_ready','launch'],true)?'setup':($stage==='live'?'active':($stage==='closed'?'closed':'watch')));
+  $opened=$stage==='live'?"COALESCE(opened_at,CURDATE())":"opened_at";
+  $q=$pdo->prepare("UPDATE franchises SET status=?,opened_at={$opened} WHERE id=?");$q->execute([$status,$fid]);
+  if($stage==='suspended'){
+   $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,operational_state,suspended_at,suspension_reason,updated_by) VALUES(?,'suspended',NOW(),?,?) ON DUPLICATE KEY UPDATE operational_state='suspended',suspended_at=NOW(),suspension_reason=VALUES(suspension_reason),updated_by=VALUES(updated_by)");
+   $q->execute([$fid,$body['blocking_reason']??'Owner-approved suspension',(int)$u['id']]);
+  }elseif($stage==='live'){
+   $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,operational_state,suspended_at,suspension_reason,updated_by) VALUES(?,'normal',NULL,NULL,?) ON DUPLICATE KEY UPDATE operational_state='normal',suspended_at=NULL,suspension_reason=NULL,updated_by=VALUES(updated_by)");
+   $q->execute([$fid,(int)$u['id']]);
+  }elseif($stage==='closed'){
+   $q=$pdo->prepare("INSERT INTO outlet_profiles(franchise_id,closure_reason,updated_by) VALUES(?,?,?) ON DUPLICATE KEY UPDATE closure_reason=VALUES(closure_reason),updated_by=VALUES(updated_by)");
+   $q->execute([$fid,$body['blocking_reason']??'Owner-approved closure',(int)$u['id']]);
+  }
+  outlet_timeline($pdo,$fid,(int)$u['id'],'pipeline','Pipeline moved to '.str_replace('_',' ',$stage),$body['next_action']??'','outlet_pipeline',null,['stage'=>$stage,'previous_status'=>$fr['status']]);
+  $pdo->commit();audit($pdo,(int)$u['id'],'pipeline_update','franchise',(string)$fid,['stage'=>$stage,'next_action'=>$body['next_action']??null,'blocking_reason'=>$body['blocking_reason']??null]);
+  out(['ok'=>true,'stage'=>$stage,'status'=>$status]);
+ }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'PIPELINE_UPDATE_FAILED'],422);}
+}
+
+if($route==='franchise.checklist.toggle' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);$id=(int)($body['id']??0);$done=!empty($body['completed'])?1:0;
+ if($fid<=0||$id<=0)out(['ok'=>false,'code'=>'INVALID_CHECKLIST_ITEM'],422);outlet_exists($pdo,$fid);
+ $q=$pdo->prepare("UPDATE outlet_checklist_items SET completed=?,completed_at=IF(?=1,NOW(),NULL),completed_by=IF(?=1,?,NULL),notes=? WHERE id=? AND franchise_id=?");
+ $q->execute([$done,$done,$done,(int)$u['id'],$body['notes']??null,$id,$fid]);
+ if($q->rowCount()!==1)out(['ok'=>false,'code'=>'CHECKLIST_ITEM_NOT_FOUND'],404);
+ outlet_timeline($pdo,$fid,(int)$u['id'],'checklist',$done?'Checklist completed':'Checklist reopened',(string)($body['label']??'Outlet checklist item'),'outlet_checklist',$id,['completed'=>$done]);
+ audit($pdo,(int)$u['id'],'checklist_update','franchise',(string)$fid,['item_id'=>$id,'completed'=>$done]);
+ out(['ok'=>true]);
+}
+
+if($route==='franchise.staff.create' && $method==='POST'){
+ csrf();$u=outlet_ops_user();$fid=(int)($body['franchise_id']??0);$name=trim((string)($body['name']??''));$role=trim((string)($body['staff_role']??''));
+ if($fid<=0||$name===''||$role==='')out(['ok'=>false,'code'=>'INVALID_STAFF'],422);outlet_exists($pdo,$fid);
+ $q=$pdo->prepare("INSERT INTO outlet_staff(franchise_id,name,staff_role,phone,email,joined_at,notes,created_by) VALUES(?,?,?,?,?,?,?,?)");
+ $q->execute([$fid,$name,$role,$body['phone']??null,$body['email']??null,($body['joined_at']??null) ?: null,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ outlet_timeline($pdo,$fid,(int)$u['id'],'staff','Outlet staff added',$name.' · '.$role,'outlet_staff',$id);
+ audit($pdo,(int)$u['id'],'create','outlet_staff',(string)$id,['franchise_id'=>$fid,'name'=>$name,'role'=>$role]);
  out(['ok'=>true,'id'=>$id],201);
 }
+
+if($route==='franchise.staff.toggle' && $method==='POST'){
+ csrf();$u=outlet_ops_user();$fid=(int)($body['franchise_id']??0);$id=(int)($body['id']??0);$active=!empty($body['active'])?1:0;
+ $q=$pdo->prepare("UPDATE outlet_staff SET active=? WHERE id=? AND franchise_id=?");$q->execute([$active,$id,$fid]);
+ if($q->rowCount()!==1)out(['ok'=>false,'code'=>'STAFF_NOT_FOUND'],404);
+ outlet_timeline($pdo,$fid,(int)$u['id'],'staff',$active?'Outlet staff activated':'Outlet staff deactivated','Staff status updated','outlet_staff',$id);
+ audit($pdo,(int)$u['id'],'status','outlet_staff',(string)$id,['active'=>$active]);
+ out(['ok'=>true]);
+}
+
+if($route==='franchise.training.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);$title=trim((string)($body['course_title']??''));$status=(string)($body['status']??'pending');
+ if($fid<=0||$title===''||!in_array($status,['pending','scheduled','completed','expired'],true))out(['ok'=>false,'code'=>'INVALID_TRAINING'],422);outlet_exists($pdo,$fid);
+ $id=(int)($body['id']??0);
+ if($id>0){
+  $q=$pdo->prepare("UPDATE outlet_training_records SET outlet_staff_id=?,course_code=?,course_title=?,status=?,scheduled_at=?,completed_at=?,expires_at=?,trainer=?,certificate_ref=?,notes=? WHERE id=? AND franchise_id=?");
+  $q->execute([($body['outlet_staff_id']??null) ?: null,$body['course_code']??null,$title,$status,($body['scheduled_at']??null) ?: null,($body['completed_at']??null) ?: null,($body['expires_at']??null) ?: null,$body['trainer']??null,$body['certificate_ref']??null,$body['notes']??null,$id,$fid]);
+ }else{
+  $q=$pdo->prepare("INSERT INTO outlet_training_records(franchise_id,outlet_staff_id,course_code,course_title,status,scheduled_at,completed_at,expires_at,trainer,certificate_ref,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+  $q->execute([$fid,$body['outlet_staff_id']?:null,$body['course_code']??null,$title,$status,$body['scheduled_at']?:null,$body['completed_at']?:null,$body['expires_at']?:null,$body['trainer']??null,$body['certificate_ref']??null,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ }
+ outlet_timeline($pdo,$fid,(int)$u['id'],'training','Training '.$status,$title,'outlet_training',$id);
+ audit($pdo,(int)$u['id'],'training_save','franchise',(string)$fid,['training_id'=>$id,'title'=>$title,'status'=>$status]);
+ out(['ok'=>true,'id'=>$id]);
+}
+
+if($route==='franchise.health.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $sales=max(0,min(100,(float)($body['sales_score']??0)));$stock=max(0,min(100,(float)($body['stock_score']??0)));$settlement=max(0,min(100,(float)($body['settlement_score']??0)));$compliance=max(0,min(100,(float)($body['compliance_score']??0)));
+ $total=round($sales*.35+$stock*.25+$settlement*.25+$compliance*.15,2);
+ $health=$total>=75?'healthy':($total>=50?'watch':'critical');
+ $q=$pdo->prepare("INSERT INTO outlet_health_checks(franchise_id,sales_score,stock_score,settlement_score,compliance_score,total_score,health,notes,checked_by) VALUES(?,?,?,?,?,?,?,?,?)");
+ $q->execute([$fid,$sales,$stock,$settlement,$compliance,$total,$health,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ outlet_timeline($pdo,$fid,(int)$u['id'],'health','Outlet health · '.$health,'Score '.$total,'outlet_health',$id,['score'=>$total]);
+ audit($pdo,(int)$u['id'],'health_check','franchise',(string)$fid,['score'=>$total,'health'=>$health]);
+ out(['ok'=>true,'id'=>$id,'total_score'=>$total,'health'=>$health],201);
+}
+
+if($route==='franchise.document.create' && $method==='POST'){
+ csrf();$u=outlet_ops_user();$fid=(int)($body['franchise_id']??0);$title=trim((string)($body['title']??''));$type=trim((string)($body['document_type']??'outlet_document'));
+ if($fid<=0||$title==='')out(['ok'=>false,'code'=>'INVALID_DOCUMENT'],422);outlet_exists($pdo,$fid);
+ $q=$pdo->prepare("INSERT INTO documents(document_type,title,reference_type,reference_id,file_path,status,created_by) VALUES(?,?,'franchise',?,?,?,?)");
+ $q->execute([$type,$title,$fid,$body['file_path']??null,$body['status']??'active',(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ outlet_timeline($pdo,$fid,(int)$u['id'],'document','Outlet document registered',$title,'document',$id);
+ audit($pdo,(int)$u['id'],'create','document',(string)$id,['franchise_id'=>$fid,'title'=>$title,'document_type'=>$type]);
+ out(['ok'=>true,'id'=>$id],201);
+}
+
+if($route==='franchise.territory'){
+ auth();
+ $rows=$pdo->query("SELECT COALESCE(NULLIF(op.division,''),'Unassigned') division,COALESCE(NULLIF(f.district,''),'Unassigned') district,COALESCE(NULLIF(f.upazila,''),'Unassigned') upazila,
+   COUNT(*) total_outlets,SUM(f.status='active') active_outlets,SUM(f.status IN('pipeline','setup')) pipeline_outlets,SUM(f.status IN('watch','critical')) attention_outlets,
+   COALESCE(SUM(COALESCE(s.sales_30d,0)),0) sales_30d
+   FROM franchises f
+   LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+   LEFT JOIN (SELECT franchise_id,SUM(gross_amount) sales_30d FROM pos_sales WHERE sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) GROUP BY franchise_id) s ON s.franchise_id=f.id
+   WHERE f.status<>'closed'
+   GROUP BY COALESCE(NULLIF(op.division,''),'Unassigned'),COALESCE(NULLIF(f.district,''),'Unassigned'),COALESCE(NULLIF(f.upazila,''),'Unassigned')
+   ORDER BY division,district,upazila")->fetchAll();
+ $outlets=$pdo->query("SELECT f.id,f.code,f.name,COALESCE(NULLIF(op.division,''),'Unassigned') division,COALESCE(NULLIF(f.district,''),'Unassigned') district,COALESCE(NULLIF(f.upazila,''),'Unassigned') upazila,f.status,pl.stage pipeline_stage,
+   COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) sales_30d
+   FROM franchises f LEFT JOIN outlet_profiles op ON op.franchise_id=f.id LEFT JOIN outlet_pipeline pl ON pl.franchise_id=f.id WHERE f.status<>'closed' ORDER BY division,district,upazila,f.name")->fetchAll();
+ out(['ok'=>true,'territories'=>$rows,'outlets'=>$outlets]);
+}
+
 if($route==='sale.create' && $method==='POST'){
  csrf(); $u=auth();
  if(!in_array($u['role'],['OWNER','OPERATIONS','FRANCHISE','OUTLET_MANAGER','CASHIER'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);

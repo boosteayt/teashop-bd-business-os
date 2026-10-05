@@ -43,3 +43,47 @@ GitHub is source of truth. Routine deployment is cPanel Update from Remote -> De
 
 ## Git discipline
 Never commit node_modules, .env, credentials, first-login passwords, logs, uploads, backups, DB dumps or runtime storage.
+
+
+## Operations Patch 1 — Outlet Network Core
+The network layer now treats each franchise outlet as a traceable operating entity.
+
+### Outlet 360
+A single outlet view combines:
+- outlet/franchisee profile and territory
+- current margin tier/percentage (read-only for Operations; Founder override only)
+- opening pipeline and next action/blocker
+- opening and closure checklist progress
+- current stock value and pack lines
+- 30-day POS sales/receipts
+- recent settlement history
+- staff and training
+- document registry
+- latest and historical health scores
+- lifecycle timeline combining operational events, POS sales, stock movements and settlements
+
+### Opening pipeline
+Lead -> Verification -> Agreement -> Shop Ready -> Training -> Stock Ready -> POS Ready -> Launch -> Live.
+
+Operations can progress normal opening stages. Suspended and Closed are Founder-final states.
+
+### Territory
+Operational hierarchy is stored as Division -> District -> Upazila -> Outlet, with territory-level outlet counts, pipeline/attention counts and 30-day sales.
+
+### Health foundation
+Outlet Health is a separate operational signal from lifecycle status:
+- Sales: 35%
+- Stock: 25%
+- Settlement discipline: 25%
+- Compliance: 15%
+
+Result:
+- 75–100: Healthy
+- 50–74.99: Watch
+- below 50: Critical
+
+### Checklists
+Opening checklist has 10 required controls. Closure checklist has 8 controls covering approval, sales stop, stock count/return, dues, POS access, brand assets and final handover.
+
+### Audit
+Profile, pipeline, checklist, staff, training, health and document mutations are recorded through the central audit log. Outlet timeline separately preserves the operational story of the outlet.
