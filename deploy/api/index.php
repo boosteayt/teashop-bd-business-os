@@ -401,10 +401,10 @@ if($route==='operations.dashboard'){
 
  $network=$pdo->query("SELECT
    COUNT(*) total_outlets,
-   SUM(status='active') active_outlets,
-   SUM(status IN('pipeline','setup')) pipeline_outlets,
-   SUM(status IN('watch','critical')) attention_outlets
-   FROM franchises WHERE status<>'closed'")->fetch();
+   SUM(f.status='active') active_outlets,
+   SUM(f.status IN('pipeline','setup')) pipeline_outlets,
+   SUM(CASE WHEN COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),'new') IN('watch','critical') THEN 1 ELSE 0 END) attention_outlets
+   FROM franchises f WHERE f.status<>'closed'")->fetch();
 
  $q=$pdo->prepare("SELECT
    COALESCE(SUM(gross_amount),0) sales,
@@ -423,6 +423,8 @@ if($route==='operations.dashboard'){
    FROM settlements WHERE status IN('draft','review','approved','locked')")->fetch();
 
  $outlets=$pdo->query("SELECT f.id,f.code,f.name,f.district,f.upazila,f.status,f.margin_tier,f.margin_percent,
+   op.division,op.target_open_date,op.operational_state,
+   pl.stage pipeline_stage,pl.next_action,pl.blocking_reason,pl.updated_at pipeline_updated_at,
    COALESCE((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) sales_30d,
    COALESCE((SELECT COUNT(*) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)),0) receipts_30d,
    (SELECT MAX(ps.sold_at) FROM pos_sales ps WHERE ps.franchise_id=f.id) last_sale_at,
@@ -436,7 +438,10 @@ if($route==='operations.dashboard'){
    COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),
      CASE WHEN f.status='critical' THEN 'critical' WHEN f.status='watch' THEN 'watch' WHEN f.status='active' THEN 'healthy' ELSE 'new' END) health,
    COALESCE((SELECT oh.total_score FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),0) health_score
-   FROM franchises f WHERE f.status<>'closed'
+   FROM franchises f
+   LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+   LEFT JOIN outlet_pipeline pl ON pl.franchise_id=f.id
+   WHERE f.status<>'closed'
    ORDER BY sales_30d DESC,f.name LIMIT 150")->fetchAll();
 
  $low=array_values(array_slice(array_filter($outlets,fn($r)=>$r['status']==='active'),-10));
@@ -640,7 +645,7 @@ if($route==='franchise.pipeline.update' && $method==='POST'){
  try{
   $q=$pdo->prepare("INSERT INTO outlet_pipeline(franchise_id,stage,target_open_date,next_action,blocking_reason,assigned_user_id,updated_by)
    VALUES(?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE stage=VALUES(stage),target_open_date=VALUES(target_open_date),next_action=VALUES(next_action),blocking_reason=VALUES(blocking_reason),assigned_user_id=VALUES(assigned_user_id),updated_by=VALUES(updated_by)");
-  $q->execute([$fid,$stage,$body['target_open_date']?:null,$body['next_action']??null,$body['blocking_reason']??null,($body['assigned_user_id']??null) ?: null,(int)$u['id']]);
+  $q->execute([$fid,$stage,($body['target_open_date']??null) ?: null,$body['next_action']??null,$body['blocking_reason']??null,($body['assigned_user_id']??null) ?: null,(int)$u['id']]);
 
   $status=in_array($stage,['lead','verification','agreement'],true)?'pipeline':(in_array($stage,['shop_ready','training','stock_ready','pos_ready','launch'],true)?'setup':($stage==='live'?'active':($stage==='closed'?'closed':'watch')));
   $opened=$stage==='live'?"COALESCE(opened_at,CURDATE())":"opened_at";
