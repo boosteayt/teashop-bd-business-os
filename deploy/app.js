@@ -508,35 +508,173 @@ function QCWastage(){
  );
 }
 
-function OperationsWorkspace(){
- const[data,setData]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[msg,setMsg]=React.useState('');
- React.useEffect(()=>{Promise.all([api('operations.dashboard'),api('franchise.territory')]).then(([a,b])=>{setData(a);setTerritory(b)}).catch(e=>setMsg('Operations data could not be loaded: '+(e.code||'ERROR')))},[]);
- if(!data)return msg?h('div',{className:'authError'},msg):h(Loading);
+
+function OperationsWorkspace({user}){
+ const[data,setData]=React.useState(null),[territory,setTerritory]=React.useState({territories:[],outlets:[]}),[work,setWork]=React.useState(null),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('network');
+ async function load(){try{const[a,b,c]=await Promise.all([api('operations.dashboard'),api('franchise.territory'),api('operations.workboard')]);setData(a);setTerritory(b);setWork(c)}catch(e){setMsg('Operations data could not be loaded: '+(e.code||'ERROR'))}}
+ React.useEffect(()=>{load()},[]);
+ if(!data||!work)return msg?h('div',{className:'authError'},msg):h(Loading);
  const n=data.network||{},s=data.sales||{},pipeline=(data.outlets||[]).filter(x=>!['live','closed'].includes(String(x.pipeline_stage||'')));
- const territoryRows=territory.territories||[];
+ const tabs=[['network','Network'],['tasks','Daily Tasks'],['visits','Field Visits'],['tickets','Support Tickets'],['compliance','Compliance & Training'],['marketing','Marketing'],['communications','Communications']];
+ let body=null;
+ if(tab==='network'){
+  body=h(React.Fragment,null,
+   h('div',{className:'stats'},
+    h(Card,{t:'Active outlets',v:String(n.active_outlets||0),s:String(n.total_outlets||0)+' total open records'}),
+    h(Card,{t:'Pipeline / setup',v:String(n.pipeline_outlets||0),s:String(pipeline.length)+' pipeline records'}),
+    h(Card,{t:'30-day / current sales',v:money(s.current||0),s:String(s.receipts||0)+' receipts this month'}),
+    h(Card,{t:'Attention outlets',v:String(n.attention_outlets||0),s:'Watch + critical'})
+   ),
+   h('section',{className:'panel'},h(Title,{t:'Opening pipeline',tag:'LAUNCH TRACKER'}),h(DataTable,{rows:pipeline,cols:[['code','Code'],['name','Outlet'],['district','District'],['pipeline_stage','Stage'],['target_open_date','Target'],['next_action','Next action'],['blocking_reason','Blocker'],['health','Health']],empty:'No outlets are currently in the opening pipeline.'})),
+   h('section',{className:'panel'},h(Title,{t:'Territory hierarchy',tag:'DIVISION → DISTRICT → UPAZILA'}),h(DataTable,{rows:territory.territories||[],cols:[['division','Division'],['district','District'],['upazila','Upazila'],['total_outlets','Outlets'],['active_outlets','Active'],['pipeline_outlets','Pipeline'],['attention_outlets','Attention'],['sales_30d','30d sales',money]],empty:'No territory assignments yet. Set Division, District and Upazila from Outlet 360°.'})),
+   h('section',{className:'panel'},h(Title,{t:'Outlet operations table',tag:'LIVE'}),h(DataTable,{rows:data.outlets||[],cols:[['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['status','Status'],['margin_percent','Margin %'],['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health'],['last_sale_at','Last sale']],empty:'No outlet records yet.'}))
+  );
+ }else body=h(OperationsPatch2View,{mode:tab,work,onRefresh:load,user});
  return h(React.Fragment,null,
-  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS · PATCH 1'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Outlet pipeline, 360° readiness, territory hierarchy, health, stock and settlement follow-up.')),
-  h('div',{className:'stats'},
-   h(Card,{t:'Active outlets',v:String(n.active_outlets||0),s:String(n.total_outlets||0)+' total open records'}),
-   h(Card,{t:'Pipeline / setup',v:String(n.pipeline_outlets||0),s:String(pipeline.length)+' pipeline records'}),
-   h(Card,{t:'30-day / current sales',v:money(s.current||0),s:String(s.receipts||0)+' receipts this month'}),
-   h(Card,{t:'Attention outlets',v:String(n.attention_outlets||0),s:'Watch + critical'})
-  ),
-  h('section',{className:'panel'},h(Title,{t:'Opening pipeline',tag:'LAUNCH TRACKER'}),h(DataTable,{rows:pipeline,cols:[
-   ['code','Code'],['name','Outlet'],['district','District'],['pipeline_stage','Stage'],['target_open_date','Target'],['next_action','Next action'],['blocking_reason','Blocker'],['health','Health']
-  ],empty:'No outlets are currently in the opening pipeline.'})),
-  h('section',{className:'panel'},h(Title,{t:'Territory hierarchy',tag:'DIVISION → DISTRICT → UPAZILA'}),h(DataTable,{rows:territoryRows,cols:[
-   ['division','Division'],['district','District'],['upazila','Upazila'],['total_outlets','Outlets'],['active_outlets','Active'],['pipeline_outlets','Pipeline'],['attention_outlets','Attention'],['sales_30d','30d sales',money]
-  ],empty:'No territory assignments yet. Set Division, District and Upazila from Outlet 360°.'})),
-  h('section',{className:'panel'},h(Title,{t:'Outlet operations table',tag:'LIVE'}),h(DataTable,{rows:data.outlets||[],cols:[
-   ['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['status','Status'],['margin_percent','Margin %'],
-   ['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health'],['last_sale_at','Last sale']
-  ],empty:'No outlet records yet.'})),
-  h('div',{className:'twocol'},
-   h('section',{className:'panel'},h(Title,{t:'Low performers',tag:'FOLLOW-UP'}),h(DataTable,{rows:data.low_performers||[],cols:[['name','Outlet'],['district','District'],['sales_30d','30d sales',money],['stock_value','Stock value',money],['health','Health']],empty:'No active outlets to rank yet.'})),
-   h('section',{className:'panel'},h(Title,{t:'Open settlements',tag:'COLLECTION'}),h(DataTable,{rows:data.settlements_due||[],cols:[['outlet','Outlet'],['period_end','Period'],['net_payable','Payable',money],['status','Status']],empty:'No open settlement follow-up.'}))
-  )
+  h('section',{className:'moduleHead'},h('small',null,'NETWORK OPERATIONS · PATCH 2'),h('h1',null,'Franchise & Retail Operations'),h('p',null,'Daily task control, field visits, support tickets, communications, compliance, training and marketing execution with SLA and escalation.')),
+  msg?h('div',{className:'authError'},msg):null,
+  h('div',{className:'opsTabs'},tabs.map(([k,l])=>h('button',{key:k,className:tab===k?'active':'',onClick:()=>setTab(k)},l))),
+  body
  );
+}
+
+function OperationsPatch2View({mode,work,onRefresh,user}){
+ const[msg,setMsg]=React.useState(''),[busy,setBusy]=React.useState(false);
+ const outlets=work.outlets||[],assignees=work.assignees||[];
+ const[task,setTask]=React.useState({franchise_id:'',task_type:'follow_up',title:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''});
+ const[visit,setVisit]=React.useState({id:0,franchise_id:'',visit_type:'routine',status:'scheduled',scheduled_at:'',visitor_user_id:'',cleanliness_score:100,branding_score:100,product_display_score:100,pricing_compliance_score:100,pos_usage_score:100,stock_handling_score:100,findings:'',corrective_action:'',next_visit_at:''});
+ const[ticket,setTicket]=React.useState({franchise_id:'',category:'other',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''});
+ const[comm,setComm]=React.useState({franchise_id:'',channel:'call',direction:'outbound',subject:'',note:'',promised_date:'',follow_up_at:''});
+ const[comp,setComp]=React.useState({franchise_id:'',branding_score:100,pricing_score:100,pos_usage_score:100,stock_handling_score:100,customer_service_score:100,findings:'',corrective_action:'',corrective_due_at:''});
+ const[marketing,setMarketing]=React.useState({id:0,franchise_id:'',campaign_code:'',campaign_name:'',status:'planned',priority:'medium',assigned_user_id:'',due_at:'',start_date:'',end_date:'',assets_ready:'0',execution_verified:'0',sales_before:0,sales_during:0,notes:''});
+ async function act(fn,success='Saved'){setBusy(true);setMsg('');try{await fn();setMsg(success);await onRefresh()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ function outletSelect(value,onChange,label='Outlet'){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},h('option',{value:''},'Select outlet'),outlets.map(x=>h('option',{key:x.id,value:x.id},x.code+' · '+x.name))))}
+ function assigneeSelect(value,onChange,label='Assigned to'){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},h('option',{value:''},'Unassigned'),assignees.map(x=>h('option',{key:x.id,value:x.id},x.name+' · '+x.role))))}
+ function selectField(label,value,onChange,items){return h('label',{className:'field'},label,h('select',{value,onChange:e=>onChange(e.target.value)},items.map(x=>h('option',{key:x,value:x},x.replaceAll('_',' ')))))}
+ const metrics=h('div',{className:'stats opsPatch2Stats'},
+  h(Card,{t:'Open tasks',v:String(work.metrics?.open_tasks||0),s:String(work.metrics?.overdue_tasks||0)+' overdue'}),
+  h(Card,{t:'Open tickets',v:String(work.metrics?.open_tickets||0),s:String(work.metrics?.overdue_tickets||0)+' overdue'}),
+  h(Card,{t:'Visits · 7 days',v:String(work.metrics?.visits_next_7d||0),s:'Scheduled follow-up'}),
+  h(Card,{t:'Compliance / training',v:String(work.metrics?.open_compliance||0),s:String(work.metrics?.training_attention||0)+' training attention'})
+ );
+
+ let body=null;
+ if(mode==='tasks'){
+  async function createTask(){if(!task.title)return;await act(async()=>{await api('operations.task.create',{method:'POST',body:{...task,franchise_id:task.franchise_id?Number(task.franchise_id):0,assigned_user_id:task.assigned_user_id?Number(task.assigned_user_id):null,due_at:task.due_at||null}});setTask({franchise_id:'',task_type:'follow_up',title:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''})},'Task created')}
+  async function updateTask(r,status,escalate=false){await act(()=>api('operations.task.update',{method:'POST',body:{id:Number(r.id),status,escalate}}),escalate?'Task escalated':'Task updated')}
+  body=h(React.Fragment,null,metrics,
+   h('section',{className:'panel'},h(Title,{t:'Create daily task / follow-up',tag:'SLA CONTROL'}),h('div',{className:'formrow opsForm'},
+    outletSelect(task.franchise_id,v=>setTask({...task,franchise_id:v})),
+    h(Field,{label:'Task title',value:task.title,onChange:v=>setTask({...task,title:v})}),
+    selectField('Type',task.task_type,v=>setTask({...task,task_type:v}),['follow_up','stock','settlement','launch','training','visit','support','marketing','compliance','other']),
+    selectField('Priority',task.priority,v=>setTask({...task,priority:v}),['low','medium','high','critical']),
+    assigneeSelect(task.assigned_user_id,v=>setTask({...task,assigned_user_id:v})),
+    h(Field,{label:'Due at',value:task.due_at,onChange:v=>setTask({...task,due_at:v}),type:'datetime-local'}),
+    h(Field,{label:'Detail',value:task.detail,onChange:v=>setTask({...task,detail:v})}),
+    h('button',{className:'primary fit',disabled:busy,onClick:createTask},'Create task')
+   )),
+   h(DataTable,{rows:work.tasks||[],cols:[['outlet','Outlet'],['title','Task'],['task_type','Type'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['status','Status'],['escalation_level','Esc.'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTask(r,'in_progress')},'Start'):null,!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTask(r,'done')},'Done'):null,!['done','cancelled'].includes(r.status)?h('button',{className:'miniBtn dangerLite',onClick:()=>updateTask(r,r.status,true)},'Escalate'):null)]],empty:'No operations tasks yet.'})
+  );
+ }else if(mode==='visits'){
+  async function saveVisit(){if(!visit.franchise_id)return;await act(async()=>{await api('operations.visit.save',{method:'POST',body:{...visit,id:Number(visit.id||0),franchise_id:Number(visit.franchise_id),visitor_user_id:visit.visitor_user_id?Number(visit.visitor_user_id):null}});setVisit({id:0,franchise_id:'',visit_type:'routine',status:'scheduled',scheduled_at:'',visitor_user_id:'',cleanliness_score:100,branding_score:100,product_display_score:100,pricing_compliance_score:100,pos_usage_score:100,stock_handling_score:100,findings:'',corrective_action:'',next_visit_at:''})},'Field visit saved')}
+  function editVisit(r){setVisit({id:Number(r.id),franchise_id:String(r.franchise_id),visit_type:r.visit_type||'routine',status:r.status||'scheduled',scheduled_at:r.scheduled_at?String(r.scheduled_at).replace(' ','T').slice(0,16):'',visitor_user_id:r.visitor_user_id?String(r.visitor_user_id):'',cleanliness_score:r.cleanliness_score??100,branding_score:r.branding_score??100,product_display_score:r.product_display_score??100,pricing_compliance_score:r.pricing_compliance_score??100,pos_usage_score:r.pos_usage_score??100,stock_handling_score:r.stock_handling_score??100,findings:r.findings||'',corrective_action:r.corrective_action||'',next_visit_at:r.next_visit_at?String(r.next_visit_at).replace(' ','T').slice(0,16):''})}
+  body=h(React.Fragment,null,metrics,
+   h('section',{className:'panel'},h(Title,{t:visit.id?'Update field visit':'Schedule / record field visit',tag:'INSPECTION'}),h('div',{className:'formrow opsForm'},
+    outletSelect(visit.franchise_id,v=>setVisit({...visit,franchise_id:v})),
+    h(Field,{label:'Visit type',value:visit.visit_type,onChange:v=>setVisit({...visit,visit_type:v})}),
+    selectField('Status',visit.status,v=>setVisit({...visit,status:v}),['scheduled','completed','follow_up','cancelled']),
+    assigneeSelect(visit.visitor_user_id,v=>setVisit({...visit,visitor_user_id:v}),'Visitor'),
+    h(Field,{label:'Scheduled at',value:visit.scheduled_at,onChange:v=>setVisit({...visit,scheduled_at:v}),type:'datetime-local'}),
+    h(Field,{label:'Cleanliness',value:visit.cleanliness_score,onChange:v=>setVisit({...visit,cleanliness_score:v}),type:'number'}),
+    h(Field,{label:'Branding',value:visit.branding_score,onChange:v=>setVisit({...visit,branding_score:v}),type:'number'}),
+    h(Field,{label:'Display',value:visit.product_display_score,onChange:v=>setVisit({...visit,product_display_score:v}),type:'number'}),
+    h(Field,{label:'Pricing',value:visit.pricing_compliance_score,onChange:v=>setVisit({...visit,pricing_compliance_score:v}),type:'number'}),
+    h(Field,{label:'POS usage',value:visit.pos_usage_score,onChange:v=>setVisit({...visit,pos_usage_score:v}),type:'number'}),
+    h(Field,{label:'Stock handling',value:visit.stock_handling_score,onChange:v=>setVisit({...visit,stock_handling_score:v}),type:'number'}),
+    h(Field,{label:'Findings',value:visit.findings,onChange:v=>setVisit({...visit,findings:v})}),
+    h(Field,{label:'Corrective action',value:visit.corrective_action,onChange:v=>setVisit({...visit,corrective_action:v})}),
+    h(Field,{label:'Next visit',value:visit.next_visit_at,onChange:v=>setVisit({...visit,next_visit_at:v}),type:'datetime-local'}),
+    h('button',{className:'primary fit',disabled:busy,onClick:saveVisit},visit.id?'Update visit':'Save visit')
+   )),
+   h(DataTable,{rows:work.visits||[],cols:[['outlet','Outlet'],['visit_type','Type'],['status','Status'],['scheduled_at','Scheduled'],['visitor','Visitor'],['overall_score','Score'],['next_visit_at','Next'],['findings','Findings'],['actions','Action',(_,r)=>h('button',{className:'miniBtn',onClick:()=>editVisit(r)},'Edit')]],empty:'No field visits recorded.'})
+  );
+ }else if(mode==='tickets'){
+  async function createTicket(){if(!ticket.franchise_id||!ticket.subject)return;await act(async()=>{await api('operations.ticket.create',{method:'POST',body:{...ticket,franchise_id:Number(ticket.franchise_id),assigned_user_id:ticket.assigned_user_id?Number(ticket.assigned_user_id):null,due_at:ticket.due_at||null}});setTicket({franchise_id:'',category:'other',subject:'',detail:'',priority:'medium',assigned_user_id:'',due_at:''})},'Support ticket created')}
+  async function updateTicket(r,status,escalate=false){let resolution=null;if(['resolved','closed'].includes(status))resolution=prompt('Resolution note:',r.resolution||'Resolved');await act(()=>api('operations.ticket.update',{method:'POST',body:{id:Number(r.id),status,escalate,resolution:resolution??r.resolution}}),escalate?'Ticket escalated':'Ticket updated')}
+  body=h(React.Fragment,null,metrics,
+   h('section',{className:'panel'},h(Title,{t:'Open support issue',tag:'SLA'}),h('div',{className:'formrow opsForm'},
+    outletSelect(ticket.franchise_id,v=>setTicket({...ticket,franchise_id:v})),
+    selectField('Category',ticket.category,v=>setTicket({...ticket,category:v}),['stock','pos','delivery','customer','branding','payment','staff_training','other']),
+    h(Field,{label:'Subject',value:ticket.subject,onChange:v=>setTicket({...ticket,subject:v})}),
+    selectField('Priority',ticket.priority,v=>setTicket({...ticket,priority:v}),['low','medium','high','critical']),
+    assigneeSelect(ticket.assigned_user_id,v=>setTicket({...ticket,assigned_user_id:v})),
+    h(Field,{label:'Due at',value:ticket.due_at,onChange:v=>setTicket({...ticket,due_at:v}),type:'datetime-local'}),
+    h(Field,{label:'Detail',value:ticket.detail,onChange:v=>setTicket({...ticket,detail:v})}),
+    h('button',{className:'primary fit',disabled:busy,onClick:createTicket},'Create ticket')
+   )),
+   h(DataTable,{rows:work.tickets||[],cols:[['ticket_no','Ticket'],['outlet','Outlet'],['category','Category'],['subject','Subject'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['status','Status'],['escalation_level','Esc.'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},!['resolved','closed','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTicket(r,'in_progress')},'Start'):null,!['resolved','closed','cancelled'].includes(r.status)?h('button',{className:'miniBtn',onClick:()=>updateTicket(r,'resolved')},'Resolve'):null,!['resolved','closed','cancelled'].includes(r.status)?h('button',{className:'miniBtn dangerLite',onClick:()=>updateTicket(r,r.status,true)},'Escalate'):null)]],empty:'No support tickets yet.'})
+  );
+ }else if(mode==='communications'){
+  async function saveComm(){if(!comm.franchise_id||!comm.note)return;await act(async()=>{await api('operations.communication.create',{method:'POST',body:{...comm,franchise_id:Number(comm.franchise_id),follow_up_at:comm.follow_up_at||null,promised_date:comm.promised_date||null}});setComm({franchise_id:'',channel:'call',direction:'outbound',subject:'',note:'',promised_date:'',follow_up_at:''})},'Communication note saved')}
+  body=h(React.Fragment,null,metrics,
+   h('section',{className:'panel'},h(Title,{t:'Log call / WhatsApp / meeting note',tag:'FOLLOW-UP TIMELINE'}),h('div',{className:'formrow opsForm'},
+    outletSelect(comm.franchise_id,v=>setComm({...comm,franchise_id:v})),
+    selectField('Channel',comm.channel,v=>setComm({...comm,channel:v}),['call','whatsapp','email','meeting','visit','internal_note','other']),
+    selectField('Direction',comm.direction,v=>setComm({...comm,direction:v}),['outbound','inbound','internal']),
+    h(Field,{label:'Subject',value:comm.subject,onChange:v=>setComm({...comm,subject:v})}),
+    h(Field,{label:'Note',value:comm.note,onChange:v=>setComm({...comm,note:v})}),
+    h(Field,{label:'Promised date',value:comm.promised_date,onChange:v=>setComm({...comm,promised_date:v}),type:'date'}),
+    h(Field,{label:'Follow-up at',value:comm.follow_up_at,onChange:v=>setComm({...comm,follow_up_at:v}),type:'datetime-local'}),
+    h('button',{className:'primary fit',disabled:busy,onClick:saveComm},'Save note')
+   )),
+   h(DataTable,{rows:work.communications||[],cols:[['created_at','Date'],['outlet','Outlet'],['channel','Channel'],['direction','Direction'],['subject','Subject'],['note','Note'],['promised_date','Promised'],['follow_up_at','Follow-up'],['created_by_name','Logged by']],empty:'No communication notes yet.'})
+  );
+ }else if(mode==='compliance'){
+  async function saveCompliance(){if(!comp.franchise_id)return;await act(async()=>{await api('operations.compliance.save',{method:'POST',body:{...comp,franchise_id:Number(comp.franchise_id),corrective_due_at:comp.corrective_due_at||null}});setComp({franchise_id:'',branding_score:100,pricing_score:100,pos_usage_score:100,stock_handling_score:100,customer_service_score:100,findings:'',corrective_action:'',corrective_due_at:''})},'Compliance check recorded')}
+  async function resolveCompliance(r){await act(()=>api('operations.compliance.resolve',{method:'POST',body:{id:Number(r.id)}}),'Compliance corrective action resolved')}
+  body=h(React.Fragment,null,metrics,
+   h('div',{className:'twocol'},
+    h('section',{className:'panel'},h(Title,{t:'Compliance inspection',tag:'SOP'}),h('div',{className:'formrow opsForm'},
+     outletSelect(comp.franchise_id,v=>setComp({...comp,franchise_id:v})),
+     h(Field,{label:'Branding',value:comp.branding_score,onChange:v=>setComp({...comp,branding_score:v}),type:'number'}),
+     h(Field,{label:'Pricing',value:comp.pricing_score,onChange:v=>setComp({...comp,pricing_score:v}),type:'number'}),
+     h(Field,{label:'POS usage',value:comp.pos_usage_score,onChange:v=>setComp({...comp,pos_usage_score:v}),type:'number'}),
+     h(Field,{label:'Stock handling',value:comp.stock_handling_score,onChange:v=>setComp({...comp,stock_handling_score:v}),type:'number'}),
+     h(Field,{label:'Customer service',value:comp.customer_service_score,onChange:v=>setComp({...comp,customer_service_score:v}),type:'number'}),
+     h(Field,{label:'Findings',value:comp.findings,onChange:v=>setComp({...comp,findings:v})}),
+     h(Field,{label:'Corrective action',value:comp.corrective_action,onChange:v=>setComp({...comp,corrective_action:v})}),
+     h(Field,{label:'Corrective due',value:comp.corrective_due_at,onChange:v=>setComp({...comp,corrective_due_at:v}),type:'datetime-local'}),
+     h('button',{className:'primary fit',disabled:busy,onClick:saveCompliance},'Save compliance')
+    )),
+    h('section',{className:'panel'},h(Title,{t:'Training attention',tag:'PENDING / EXPIRING'}),h(DataTable,{rows:work.training_attention||[],cols:[['outlet','Outlet'],['course_title','Course'],['status','Status'],['scheduled_at','Scheduled'],['expires_at','Expires'],['trainer','Trainer']],empty:'No training attention items.'}))
+   ),
+   h(DataTable,{rows:work.compliance||[],cols:[['checked_at','Checked'],['outlet','Outlet'],['overall_score','Score'],['status','Status'],['findings','Findings'],['corrective_action','Corrective'],['corrective_due_at','Due'],['resolved_at','Resolved'],['actions','Action',(_,r)=>!r.resolved_at&&r.status!=='compliant'?h('button',{className:'miniBtn',onClick:()=>resolveCompliance(r)},'Resolve'):'—']],empty:'No compliance checks yet.'})
+  );
+ }else if(mode==='marketing'){
+  async function saveMarketing(escalate=false){if(!marketing.franchise_id||!marketing.campaign_name)return;await act(async()=>{await api('operations.marketing.save',{method:'POST',body:{...marketing,id:Number(marketing.id||0),franchise_id:Number(marketing.franchise_id),assigned_user_id:marketing.assigned_user_id?Number(marketing.assigned_user_id):null,assets_ready:marketing.assets_ready==='1',execution_verified:marketing.execution_verified==='1',due_at:marketing.due_at||null,escalate}});if(!escalate)setMarketing({id:0,franchise_id:'',campaign_code:'',campaign_name:'',status:'planned',priority:'medium',assigned_user_id:'',due_at:'',start_date:'',end_date:'',assets_ready:'0',execution_verified:'0',sales_before:0,sales_during:0,notes:''})},escalate?'Campaign escalated':'Marketing execution saved')}
+  function editMarketing(r){setMarketing({id:Number(r.id),franchise_id:String(r.franchise_id),campaign_code:r.campaign_code||'',campaign_name:r.campaign_name||'',status:r.status||'planned',priority:r.priority||'medium',assigned_user_id:r.assigned_user_id?String(r.assigned_user_id):'',due_at:r.due_at?String(r.due_at).replace(' ','T').slice(0,16):'',start_date:r.start_date||'',end_date:r.end_date||'',assets_ready:Number(r.assets_ready)?'1':'0',execution_verified:Number(r.execution_verified)?'1':'0',sales_before:r.sales_before||0,sales_during:r.sales_during||0,notes:r.notes||''})}
+  body=h(React.Fragment,null,metrics,
+   h('section',{className:'panel'},h(Title,{t:marketing.id?'Update campaign execution':'Track outlet marketing execution',tag:'HQ POLICY · OUTLET EXECUTION'}),h('div',{className:'formrow opsForm'},
+    outletSelect(marketing.franchise_id,v=>setMarketing({...marketing,franchise_id:v})),
+    h(Field,{label:'Campaign code',value:marketing.campaign_code,onChange:v=>setMarketing({...marketing,campaign_code:v})}),
+    h(Field,{label:'Campaign name',value:marketing.campaign_name,onChange:v=>setMarketing({...marketing,campaign_name:v})}),
+    selectField('Status',marketing.status,v=>setMarketing({...marketing,status:v}),['planned','ready','live','completed','not_participating']),
+    selectField('Priority',marketing.priority,v=>setMarketing({...marketing,priority:v}),['low','medium','high','critical']),
+    assigneeSelect(marketing.assigned_user_id,v=>setMarketing({...marketing,assigned_user_id:v})),
+    h(Field,{label:'Due at',value:marketing.due_at,onChange:v=>setMarketing({...marketing,due_at:v}),type:'datetime-local'}),
+    h(Field,{label:'Start',value:marketing.start_date,onChange:v=>setMarketing({...marketing,start_date:v}),type:'date'}),
+    h(Field,{label:'End',value:marketing.end_date,onChange:v=>setMarketing({...marketing,end_date:v}),type:'date'}),
+    selectField('Assets ready',marketing.assets_ready,v=>setMarketing({...marketing,assets_ready:v}),['0','1']),
+    selectField('Execution verified',marketing.execution_verified,v=>setMarketing({...marketing,execution_verified:v}),['0','1']),
+    h(Field,{label:'Sales before',value:marketing.sales_before,onChange:v=>setMarketing({...marketing,sales_before:v}),type:'number'}),
+    h(Field,{label:'Sales during',value:marketing.sales_during,onChange:v=>setMarketing({...marketing,sales_during:v}),type:'number'}),
+    h(Field,{label:'Notes',value:marketing.notes,onChange:v=>setMarketing({...marketing,notes:v})}),
+    h('button',{className:'primary fit',disabled:busy,onClick:()=>saveMarketing(false)},marketing.id?'Update campaign':'Save campaign')
+   )),
+   h(DataTable,{rows:work.marketing||[],cols:[['outlet','Outlet'],['campaign_name','Campaign'],['status','Status'],['priority','Priority'],['assigned_to','Assigned'],['due_at','Due'],['sla_status','SLA'],['assets_ready','Assets',v=>Number(v)?'Yes':'No'],['execution_verified','Verified',v=>Number(v)?'Yes':'No'],['sales_during','Sales',money],['escalation_level','Esc.'],['actions','Actions',(_,r)=>h('div',{className:'actionRow'},h('button',{className:'miniBtn',onClick:()=>editMarketing(r)},'Edit'),!['completed','not_participating'].includes(r.status)?h('button',{className:'miniBtn dangerLite',onClick:()=>{editMarketing(r);setTimeout(()=>saveMarketing(true),0)}},'Escalate'):null)]],empty:'No marketing execution records.'})
+  );
+ }
+ return h(React.Fragment,null,msg?h('div',{className:'notice'},h('b',null,'Operations'),h('span',null,msg)):null,body);
 }
 function RecordsWorkspace({module,title,desc}){
  const[rows,setRows]=React.useState([]),[msg,setMsg]=React.useState('');
