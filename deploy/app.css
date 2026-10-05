@@ -574,3 +574,21 @@ td b{font-size:9.5px}
  .timelineRow{grid-template-columns:12px minmax(0,1fr)}
  .timelineRow>strong{grid-column:2}
 }
+
+
+/* operations-command-center-v13 */
+.opsHero{background:linear-gradient(120deg,#143d2b 0%,#0d3323 55%,#183f2d 100%)}
+.opsSecondary{margin-top:-2px}
+.opsScore{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.opsScore>div{border:1px solid #e5ebe8;background:#f9fbfa;border-radius:8px;padding:10px}
+.opsScore span,.opsScore b{display:block}
+.opsScore span{font-size:8px;color:#839089;text-transform:uppercase;letter-spacing:.05em}
+.opsScore b{font-size:14px;color:#173126;margin-top:4px}
+.roleScope{margin-top:9px}
+.scopeGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.scopeGrid>div{border:1px solid #e6ebe8;border-radius:9px;padding:11px;background:#fbfcfb}
+.scopeGrid b{display:block;font-size:10px;color:#1c2d24;margin-bottom:5px}
+.scopeGrid p{font-size:9.5px;line-height:1.5;color:#6f7b74;margin:0}
+@media(max-width:760px){
+ .opsScore,.scopeGrid{grid-template-columns:1fr}
+}
