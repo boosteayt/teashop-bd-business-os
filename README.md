@@ -206,3 +206,34 @@ Existing production DB:
 
 Read-only DB gate:
 `php server/verify-operations-patch3.php`
+
+
+## Operations Patch 4 — Alerts, Performance & Final Closure
+Final Operations scope:
+- Automatic alert scan for POS inactivity, overdue settlements/tasks/tickets, compliance failures, stock mismatches, expired training, stock risk and customer-complaint spikes
+- Alerts inbox with Open / Acknowledged / Resolved lifecycle
+- Operations notification generation for new/reopened alert conditions
+- Exact role scorecard weights:
+  - Sales Growth 30%
+  - Stock Rotation 20%
+  - Outlet Health 15%
+  - Settlement Discipline 15%
+  - Retention 10%
+  - SOP Compliance 10%
+- P&L-based performance-share preview on verified POS sales less franchise earned margin and Finance-approved Franchise Division ledger expenses
+- Owner approval required before performance share becomes payable
+- Finance/Owner payment closure after approval
+- Regional / network report by Division + District
+- Month-end Operations report snapshot
+- Runtime role/control audit
+- Final source + database verifier
+- Operations remains blocked from sourcing, production/QC final authority, pricing, margin override, company finance administration, users/settings, final outlet suspension/closure and self-approval of performance
+
+Existing production DB:
+`php server/upgrade-operations-patch4.php`
+
+Patch 4 DB gate:
+`php server/verify-operations-patch4.php`
+
+Full Patch 1–4 closure gate:
+`php server/verify-operations-final.php`
