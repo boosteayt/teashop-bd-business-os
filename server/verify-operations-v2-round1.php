@@ -42,7 +42,7 @@ $forbidden=['Omar Faruk','Md. Omar Faruk','faruk_active_tier','faruk_manual_perc
 $forbiddenHits=[];foreach($forbidden as $x)if(stripos($source,$x)!==false)$forbiddenHits[]=$x;
 
 $accessOk=strpos($app,"OPERATIONS:['Dashboard','Tea','Inventory / Warehouse','Outlets / Franchise','Franchise & Retail Operations','POS / Sales','Margin & Settlement','Performance & Incentives','Customers','Logistics','Reports','Notifications']")!==false;
-$round1Ok=strpos($api,"$route==='operations.round1'")!==false&&strpos($api,"$route==='operations.checkin.save'")!==false&&strpos($api,"$route==='operations.contract.save'")!==false;
+$round1Ok=strpos($api,"\$route==='operations.round1'")!==false&&strpos($api,"\$route==='operations.checkin.save'")!==false&&strpos($api,"\$route==='operations.contract.save'")!==false;
 $alertOk=strpos($api,"'contract_expiry'")!==false;
 $dbOk=$products===99&&$roles>=12&&!$missing;
 $sourceOk=!$missingMarkers&&!$forbiddenHits&&$accessOk&&$round1Ok&&$alertOk;
