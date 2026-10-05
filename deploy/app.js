@@ -142,6 +142,12 @@ function OperationsDashboard(){
    h(Card,{t:'Escalation readiness',v:String((w.overdue_tasks||0)+(w.overdue_tickets||0)),s:'overdue work items'}),
    h(Card,{t:'Control boundary',v:'LOCKED',s:'Operations role · Owner final approvals'})
   ),
+  h('div',{className:'stats opsV2DashStats'},
+   h(Card,{t:'Daily check-ins',v:String(w.checkins_today||0),s:String(w.missing_checkins||0)+' missing today'}),
+   h(Card,{t:'Renewals due',v:String(w.renewals_due||0),s:'agreement / lease / licence'}),
+   h(Card,{t:'Launch war rooms',v:String(w.launch_rooms||0),s:'pipeline + setup'}),
+   h(Card,{t:'Regional command',v:'LIVE',s:'Division → District → Upazila'})
+  ),
   h('div',{className:'twocol'},
    h('section',{className:'panel'},h(Title,{t:'Low-performing active outlets',tag:'30-DAY SALES'}),h(DataTable,{rows:data.low_performers||[],cols:[['code','Code'],['name','Outlet'],['district','District'],['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health']],empty:'No active outlet performance data yet.'})),
    h('section',{className:'panel'},h(Title,{t:'Settlement follow-up',tag:'OPEN'}),h(DataTable,{rows:data.settlements_due||[],cols:[['outlet','Outlet'],['period_end','Period end'],['verified_sales','Verified sales',money],['earned_margin','Margin',money],['net_payable','Net payable',money],['status','Status']],empty:'No open settlements.'}))
