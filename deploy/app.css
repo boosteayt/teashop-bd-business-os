@@ -592,3 +592,24 @@ td b{font-size:9.5px}
 @media(max-width:760px){
  .opsScore,.scopeGrid{grid-template-columns:1fr}
 }
+
+
+/* operations-patch1-outlet360 */
+.outletCreate{margin-bottom:12px}.outletCreateGrid{grid-template-columns:repeat(5,minmax(120px,1fr))}
+.outlet360{margin-top:18px;padding-top:18px;border-top:1px solid #dfe7e3}
+.outlet360Head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;background:linear-gradient(120deg,#102f22,#174834);color:#fff;padding:20px;border-radius:15px}
+.outlet360Head small,.outlet360Head h2,.outlet360Head p{display:block}.outlet360Head small{font-size:8px;color:#bdcfc6;margin-top:10px}.outlet360Head h2{font-size:23px;margin:5px 0}.outlet360Head p{font-size:9px;color:#9cb3a8;margin:0}
+.outlet360Badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.outlet360Summary{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:10px 0}
+.outlet360Summary>div,.profileFacts>div{border:1px solid #e3eae6;background:#fff;border-radius:10px;padding:11px}
+.outlet360Summary span,.outlet360Summary b,.profileFacts span,.profileFacts b,.profileFacts small{display:block}
+.outlet360Summary span,.profileFacts span{font-size:7.5px;color:#829289;text-transform:uppercase;letter-spacing:.05em}.outlet360Summary b{font-size:13px;margin-top:4px;text-transform:capitalize}
+.outletTabs{display:flex;gap:5px;overflow:auto;margin:10px 0;padding-bottom:2px}.outletTabs button{white-space:nowrap;border:1px solid #dfe7e3;background:#fff;color:#64786d;border-radius:8px;padding:8px 11px;font-size:9px;font-weight:700;cursor:pointer}.outletTabs button.active{background:#153e2e;border-color:#153e2e;color:#fff}
+.profileFacts{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-bottom:10px}.profileFacts b{font-size:10px;margin:4px 0}.profileFacts small{font-size:8px;color:#7e9087}
+.outletProfileForm{grid-template-columns:repeat(3,minmax(130px,1fr))}
+.pipelineRail{display:grid;grid-template-columns:repeat(9,1fr);gap:4px;margin:5px 0 13px}.pipelineRail>div{text-align:center;position:relative}.pipelineRail i{display:block;width:9px;height:9px;border-radius:50%;background:#d8e0dc;margin:0 auto 5px;box-shadow:0 0 0 3px #f4f7f5}.pipelineRail span{display:block;font-size:6.5px;color:#899991;text-transform:uppercase}.pipelineRail .passed i{background:#2d805d}.pipelineRail .passed span{color:#2d6f54;font-weight:700}
+.checklist{display:flex;flex-direction:column;gap:5px}.checklist button{display:grid;grid-template-columns:22px 1fr auto;gap:7px;align-items:center;border:1px solid #e4eae7;background:#fff;border-radius:8px;padding:9px;text-align:left;cursor:pointer}.checklist button.done{background:#f0f8f4;border-color:#cfe5d9}.checklist button:disabled{cursor:default;opacity:.75}.checklist i{font-style:normal;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:#eef2f0;color:#789086}.checklist .done i{background:#d8efe3;color:#216a4a}.checklist span{font-size:9px;font-weight:700}.checklist small{font-size:7px;color:#91a097}
+.healthHero{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;align-items:center;background:#f6faf8;border:1px solid #e1eae5;border-radius:11px;padding:14px;margin-bottom:10px}.healthHero b{font-size:32px;color:#1d6748;grid-row:1/3}.healthHero span{font-size:10px;font-weight:800}.healthHero small{font-size:8px;color:#788a81}.healthInputs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-items:end}
+.outletTimeline{max-height:560px;overflow:auto}
+@media(max-width:1150px){.outlet360Summary{grid-template-columns:repeat(3,1fr)}.pipelineRail{grid-template-columns:repeat(5,1fr)}.outletCreateGrid,.outletProfileForm{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:720px){.outlet360Head{display:block}.outlet360Badges{justify-content:flex-start;margin-top:10px}.outlet360Summary,.profileFacts,.healthInputs,.outletCreateGrid,.outletProfileForm{grid-template-columns:1fr}.pipelineRail{grid-template-columns:repeat(3,1fr)}}
