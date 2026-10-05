@@ -1622,7 +1622,13 @@ if($route==='settlement.generate' && $method==='POST'){
  $period=(string)($body['period']??'');
  if(!preg_match('/^\d{4}-\d{2}$/',$period)) out(['ok'=>false,'code'=>'INVALID_PERIOD'],422);
  $start=$period.'-01';$end=date('Y-m-t',strtotime($start));
- $franchises=$pdo->query("SELECT id FROM franchises WHERE status<>'closed' ORDER BY id")->fetchAll();
+ $scopeFid=(int)($body['franchise_id']??0);
+ if($scopeFid>0){
+  $q=$pdo->prepare("SELECT id FROM franchises WHERE id=? AND status<>'closed'");$q->execute([$scopeFid]);$franchises=$q->fetchAll();
+  if(!$franchises)out(['ok'=>false,'code'=>'FRANCHISE_NOT_FOUND'],404);
+ }else{
+  $franchises=$pdo->query("SELECT id FROM franchises WHERE status<>'closed' ORDER BY id")->fetchAll();
+ }
  $pdo->beginTransaction();
  try{
   foreach($franchises as $fr){
@@ -1642,7 +1648,7 @@ if($route==='settlement.generate' && $method==='POST'){
     $q->execute([$fid,$start,$end,$opening,$received,$verified,$closing,$earned,$net]);
    }
   }
-  $pdo->commit(); audit($pdo,(int)$u['id'],'generate','settlement_period',$period,['period_start'=>$start,'period_end'=>$end]);
+  $pdo->commit(); audit($pdo,(int)$u['id'],'generate','settlement_period',$period,['period_start'=>$start,'period_end'=>$end,'franchise_id'=>$scopeFid?:null]);
   out(['ok'=>true,'period'=>$period]);
  }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();out(['ok'=>false,'code'=>'SETTLEMENT_GENERATE_FAILED'],422);}
 }
