@@ -1407,7 +1407,11 @@ if($route==='operations.dashboard'){
    (SELECT COUNT(*) FROM outlet_training_records WHERE status IN('pending','scheduled','expired') OR (expires_at IS NOT NULL AND expires_at<=DATE_ADD(CURDATE(),INTERVAL 30 DAY))) training_attention,
    (SELECT COUNT(*) FROM marketing_executions WHERE status IN('planned','ready','live')) active_marketing,
    (SELECT COUNT(*) FROM operations_alerts WHERE status='open') open_alerts,
-   (SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical') critical_alerts")->fetch();
+   (SELECT COUNT(*) FROM operations_alerts WHERE status='open' AND severity='critical') critical_alerts,
+   (SELECT COUNT(*) FROM outlet_daily_checkins WHERE checkin_date=CURDATE()) checkins_today,
+   (SELECT COUNT(*) FROM franchises f2 WHERE f2.status IN('active','watch','critical','setup') AND NOT EXISTS(SELECT 1 FROM outlet_daily_checkins dc WHERE dc.franchise_id=f2.id AND dc.checkin_date=CURDATE())) missing_checkins,
+   (SELECT COUNT(*) FROM outlet_contracts oc WHERE oc.expiry_date IS NOT NULL AND oc.renewal_status NOT IN('renewed','not_required') AND DATEDIFF(oc.expiry_date,CURDATE())<=oc.reminder_days) renewals_due,
+   (SELECT COUNT(*) FROM outlet_pipeline pl2 JOIN franchises f2 ON f2.id=pl2.franchise_id WHERE f2.status IN('pipeline','setup') AND pl2.stage NOT IN('live','closed')) launch_rooms")->fetch();
 
  $currentSales=(float)($current['sales']??0);
  $previousSales=(float)($previous['sales']??0);
@@ -1444,6 +1448,10 @@ if($route==='operations.dashboard'){
      'active_marketing'=>(int)($work['active_marketing']??0),
      'open_alerts'=>(int)($work['open_alerts']??0),
      'critical_alerts'=>(int)($work['critical_alerts']??0),
+     'checkins_today'=>(int)($work['checkins_today']??0),
+     'missing_checkins'=>(int)($work['missing_checkins']??0),
+     'renewals_due'=>(int)($work['renewals_due']??0),
+     'launch_rooms'=>(int)($work['launch_rooms']??0),
    ],
    'outlets'=>$outlets,
    'low_performers'=>$low,
