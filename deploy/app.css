@@ -628,3 +628,11 @@ td b{font-size:9.5px}
 @media(max-width:1180px){.opsForm{grid-template-columns:repeat(3,minmax(140px,1fr))}}
 @media(max-width:820px){.opsForm{grid-template-columns:1fr 1fr}.opsTabs{margin-top:0}}
 @media(max-width:560px){.opsForm{grid-template-columns:1fr}.opsTabs button{font-size:9px;padding:8px 10px}}
+
+
+/* operations-patch3-intelligence */
+.opsTabs{scrollbar-width:thin}
+.opsTabs button:nth-last-child(-n+4){border-style:dashed}
+.opsTabs button.active:nth-last-child(-n+4){border-style:solid}
+.tablewrap td .actionRow{min-width:118px}
+@media(max-width:720px){.tablewrap table{min-width:980px}}
