@@ -430,12 +430,12 @@ if($route==='finance.summary'){
  $e=(float)$pdo->query("SELECT COALESCE(SUM(CASE WHEN entry_type='debit' THEN amount ELSE 0 END),0) FROM finance_ledger")->fetchColumn();
  $dist=max(0,$s-$m-$e);
  $settings=[];
- foreach($pdo->query("SELECT setting_key,setting_value FROM system_settings WHERE setting_key IN('faruk_active_tier','faruk_manual_percent')")->fetchAll() as $row){$settings[$row['setting_key']]=$row['setting_value'];}
- $tier=$settings['faruk_active_tier']??'Base';
- $pct=['Base'=>15.0,'Growth'=>20.0,'Elite'=>25.0][$tier]??(float)($settings['faruk_manual_percent']??20);
- if($tier==='Manual') $pct=(float)($settings['faruk_manual_percent']??20);
+ foreach($pdo->query("SELECT setting_key,setting_value FROM system_settings WHERE setting_key IN('management_share_active_tier','management_share_manual_percent')")->fetchAll() as $row){$settings[$row['setting_key']]=$row['setting_value'];}
+ $tier=$settings['management_share_active_tier']??'Base';
+ $pct=['Base'=>15.0,'Growth'=>20.0,'Elite'=>25.0][$tier]??(float)($settings['management_share_manual_percent']??20);
+ if($tier==='Manual') $pct=(float)($settings['management_share_manual_percent']??20);
  $share=round($dist*$pct/100,2);
- out(['ok'=>true,'verified_sales'=>$s,'franchise_earned_margin'=>$m,'approved_expenses'=>$e,'distributable_profit'=>$dist,'faruk_tier'=>$tier,'faruk_percent'=>$pct,'faruk_share'=>$share,'company_net_after_faruk'=>round($dist-$share,2)]);
+ out(['ok'=>true,'verified_sales'=>$s,'franchise_earned_margin'=>$m,'approved_expenses'=>$e,'distributable_profit'=>$dist,'management_tier'=>$tier,'management_percent'=>$pct,'management_share'=>$share,'company_net_after_management'=>round($dist-$share,2)]);
 }
 
 if($route==='settings'){
@@ -445,7 +445,7 @@ if($route==='settings'){
  $defaults=[
   'pricing_tube30'=>'60','pricing_pouch50'=>'18','pricing_pouch100'=>'22','pricing_ctc250'=>'24','pricing_ctc500'=>'28',
   'pricing_labour'=>'5','pricing_overhead'=>'7','pricing_logistics'=>'4','pricing_wastage_percent'=>'3','tax_provision_percent'=>'0',
-  'faruk_active_tier'=>'Base','faruk_manual_percent'=>'20'
+  'management_share_active_tier'=>'Base','management_share_manual_percent'=>'20'
  ];
  foreach($defaults as $k=>$v){if(!array_key_exists($k,$settings))$settings[$k]=$v;}
  out(['ok'=>true,'settings'=>$settings]);
@@ -455,15 +455,15 @@ if($route==='settings.save' && $method==='POST'){
  csrf(); $u=owner();
  $allowed=[
   'pricing_tube30','pricing_pouch50','pricing_pouch100','pricing_ctc250','pricing_ctc500','pricing_labour','pricing_overhead','pricing_logistics',
-  'pricing_wastage_percent','tax_provision_percent','faruk_active_tier','faruk_manual_percent'
+  'pricing_wastage_percent','tax_provision_percent','management_share_active_tier','management_share_manual_percent'
  ];
  $incoming=$body['settings']??[];
  if(!is_array($incoming)) out(['ok'=>false,'code'=>'INVALID_SETTINGS'],422);
  $q=$pdo->prepare('INSERT INTO system_settings(setting_key,setting_value,updated_by) VALUES(?,?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)');
  foreach($incoming as $k=>$v){
   if(!in_array($k,$allowed,true)) continue;
-  if($k==='faruk_active_tier'){
-   if(!in_array((string)$v,['Base','Growth','Elite','Manual'],true)) out(['ok'=>false,'code'=>'INVALID_FARUK_TIER'],422);
+  if($k==='management_share_active_tier'){
+   if(!in_array((string)$v,['Base','Growth','Elite','Manual'],true)) out(['ok'=>false,'code'=>'INVALID_MANAGEMENT_TIER'],422);
   }else{
    if(!is_numeric($v) || (float)$v<0) out(['ok'=>false,'code'=>'INVALID_SETTING_VALUE','key'=>$k],422);
   }
@@ -799,6 +799,101 @@ if($route==='pricing.packaging-costs'){
   LEFT JOIN packaging_materials pm ON pm.id=b.packaging_material_id
   GROUP BY pp.id,pp.product_id,pp.grams")->fetchAll();
  out(['ok'=>true,'costs'=>$rows]);
+}
+
+
+if($route==='tea.overview'){
+ auth();
+ $rows=$pdo->query("SELECT p.id,p.sku,p.name,p.category,p.purchase_cost_per_kg,
+  (SELECT COUNT(*) FROM product_packs pp WHERE pp.product_id=p.id AND pp.active=1) sku_count,
+  (SELECT MAX(pb.produced_at) FROM production_batches pb WHERE pb.product_id=p.id) last_produced_at,
+  COALESCE((SELECT SUM(CASE
+    WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty
+    WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty
+    ELSE il.qty END)
+   FROM inventory_ledger il JOIN product_packs pp2 ON pp2.id=il.product_pack_id WHERE pp2.product_id=p.id),0) finished_stock_qty
+  FROM products p WHERE p.active=1 ORDER BY p.category,p.name")->fetchAll();
+ out(['ok'=>true,'teas'=>$rows,'count'=>count($rows)]);
+}
+
+if($route==='tea.history'){
+ auth(); $pid=(int)($_GET['product_id']??0);
+ if($pid<=0) out(['ok'=>false,'code'=>'INVALID_TEA'],422);
+ $q=$pdo->prepare("SELECT p.id,p.sku,p.name,p.category,p.purchase_cost_per_kg,p.active FROM products p WHERE p.id=? LIMIT 1");
+ $q->execute([$pid]); $tea=$q->fetch(); if(!$tea) out(['ok'=>false,'code'=>'TEA_NOT_FOUND'],404);
+
+ $q=$pdo->prepare("SELECT pp.id,pp.grams,pp.mrp,pp.active,
+   COALESCE((SELECT SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) FROM inventory_ledger il WHERE il.product_pack_id=pp.id),0) stock_qty
+   FROM product_packs pp WHERE pp.product_id=? ORDER BY pp.grams");
+ $q->execute([$pid]); $packs=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT pr.id,pr.reference_no,pr.received_date event_at,s.name supplier,pi.quantity_kg qty_kg,pi.unit_rate,pi.batch_no,pr.total_amount
+   FROM purchase_items pi JOIN purchase_receipts pr ON pr.id=pi.purchase_receipt_id LEFT JOIN suppliers s ON s.id=pr.supplier_id
+   WHERE pi.product_id=? ORDER BY pr.id DESC LIMIT 100");
+ $q->execute([$pid]); $purchases=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT pb.id,pb.batch_no,pb.input_kg,pb.output_kg,pb.wastage_kg,pb.qc_status,pb.produced_at event_at,
+   GROUP_CONCAT(CONCAT(r.name,' ',TRIM(TRAILING '0' FROM TRIM(TRAILING '.' FROM pbi.qty_kg)),'kg') ORDER BY r.name SEPARATOR ' + ') components,
+   COALESCE(SUM(pbi.qty_kg*pbi.unit_cost),0) input_cost
+   FROM production_batches pb
+   LEFT JOIN production_batch_inputs pbi ON pbi.production_batch_id=pb.id
+   LEFT JOIN raw_tea_materials r ON r.id=pbi.raw_tea_material_id
+   WHERE pb.product_id=? GROUP BY pb.id ORDER BY pb.id DESC LIMIT 100");
+ $q->execute([$pid]); $production=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT pj.id,pj.job_no,pj.batch_no,pj.pack_qty,pp.grams,pj.labour_cost,pj.sealing_cost,pj.other_cost,pj.completed_at event_at
+   FROM packaging_jobs pj JOIN product_packs pp ON pp.id=pj.product_pack_id WHERE pp.product_id=? ORDER BY pj.id DESC LIMIT 100");
+ $q->execute([$pid]); $packaging=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT il.id,il.location_type,il.location_id,il.movement_type,il.qty,il.unit_value,il.reference_type,il.reference_id,il.batch_no,il.created_at event_at,pp.grams
+   FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id
+   WHERE pp.product_id=? ORDER BY il.id DESC LIMIT 200");
+ $q->execute([$pid]); $stock=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT ps.id sale_id,ps.receipt_no,ps.franchise_id,ps.gross_amount,ps.earned_margin,ps.margin_percent,ps.payment_method,ps.sold_at event_at,
+   psi.qty,psi.unit_price,psi.line_total,pp.grams
+   FROM pos_sale_items psi JOIN pos_sales ps ON ps.id=psi.pos_sale_id JOIN product_packs pp ON pp.id=psi.product_pack_id
+   WHERE pp.product_id=? ORDER BY ps.id DESC LIMIT 200");
+ $q->execute([$pid]); $sales=$q->fetchAll();
+
+ $q=$pdo->prepare("SELECT pph.id,pph.old_mrp,pph.new_mrp,pph.reason,pph.effective_at,pp.grams
+   FROM product_price_history pph JOIN product_packs pp ON pp.id=pph.product_pack_id WHERE pp.product_id=? ORDER BY pph.id DESC LIMIT 100");
+ $q->execute([$pid]); $prices=$q->fetchAll();
+
+ $events=[];
+ foreach($purchases as $x)$events[]=['event_at'=>$x['event_at'],'type'=>'PURCHASE','reference'=>$x['reference_no'],'detail'=>($x['supplier']?:'Supplier').' · '.(float)$x['qty_kg'].'kg @ '.(float)$x['unit_rate'],'amount'=>$x['total_amount']];
+ foreach($production as $x)$events[]=['event_at'=>$x['event_at'],'type'=>'BLEND / PRODUCTION','reference'=>$x['batch_no'],'detail'=>($x['components']?:'Production batch').' · output '.(float)$x['output_kg'].'kg · waste '.(float)$x['wastage_kg'].'kg · QC '.$x['qc_status'],'amount'=>$x['input_cost']];
+ foreach($packaging as $x)$events[]=['event_at'=>$x['event_at'],'type'=>'PACKAGING','reference'=>$x['job_no'],'detail'=>(int)$x['pack_qty'].' × '.(int)$x['grams'].'g · batch '.($x['batch_no']?:'—'),'amount'=>(float)$x['labour_cost']+(float)$x['sealing_cost']+(float)$x['other_cost']];
+ foreach($stock as $x)$events[]=['event_at'=>$x['event_at'],'type'=>'STOCK '.strtoupper((string)$x['movement_type']),'reference'=>$x['reference_type'].'#'.$x['reference_id'],'detail'=>(float)$x['qty'].' × '.(int)$x['grams'].'g · '.$x['location_type'],'amount'=>(float)$x['qty']*(float)$x['unit_value']];
+ foreach($sales as $x)$events[]=['event_at'=>$x['event_at'],'type'=>'POS SALE','reference'=>$x['receipt_no'],'detail'=>(float)$x['qty'].' × '.(int)$x['grams'].'g @ '.(float)$x['unit_price'].' · margin '.(float)$x['margin_percent'].'%','amount'=>$x['line_total']];
+ foreach($prices as $x)$events[]=['event_at'=>$x['effective_at'],'type'=>'MRP CHANGE','reference'=>(int)$x['grams'].'g','detail'=>'MRP '.(float)$x['old_mrp'].' → '.(float)$x['new_mrp'].($x['reason']?' · '.$x['reason']:''),'amount'=>$x['new_mrp']];
+ usort($events,fn($a,$b)=>strcmp((string)$b['event_at'],(string)$a['event_at']));
+
+ out(['ok'=>true,'tea'=>$tea,'packs'=>$packs,'purchases'=>$purchases,'production'=>$production,'packaging'=>$packaging,'stock_movements'=>$stock,'sales'=>$sales,'price_history'=>$prices,'events'=>array_slice($events,0,400)]);
+}
+
+if($route==='workspace.records'){
+ $u=auth(); $module=(string)($_GET['module']??'');
+ if($module==='audit' && !in_array($u['role'],['OWNER','AUDITOR'],true)) out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $map=[
+  'qc'=>"SELECT q.id,q.checked_at,q.check_type,q.status,q.moisture_percent,q.sample_weight_kg,q.notes,pb.batch_no,p.name tea
+        FROM qc_checks q LEFT JOIN production_batches pb ON pb.id=q.production_batch_id LEFT JOIN products p ON p.id=pb.product_id ORDER BY q.id DESC LIMIT 300",
+  'wastage'=>"SELECT w.id,w.created_at,w.reference_type,w.reference_id,p.name tea,w.qty_kg,w.value_amount,w.reason,w.status
+        FROM wastage_records w LEFT JOIN products p ON p.id=w.product_id ORDER BY w.id DESC LIMIT 300",
+  'performance'=>"SELECT pr.id,pr.role_code,u.name user_name,pr.period_start,pr.period_end,pr.total_score,pr.distributable_profit,pr.performance_share_percent,pr.performance_share_amount,pr.status
+        FROM performance_records pr LEFT JOIN users u ON u.id=pr.user_id ORDER BY pr.id DESC LIMIT 300",
+  'customers'=>"SELECT id,franchise_id,name,phone,email,loyalty_points,active,created_at FROM customers ORDER BY id DESC LIMIT 300",
+  'b2b'=>"SELECT id,order_no,company_name,contact_name,contact_phone,order_date,total_amount,paid_amount,status,referral_source FROM corporate_orders ORDER BY id DESC LIMIT 300",
+  'logistics'=>"SELECT id,shipment_no,source_type,source_id,destination_type,destination_id,carrier,challan_no,delivery_cost,dispatch_at,received_at,status FROM logistics_shipments ORDER BY id DESC LIMIT 300",
+  'approvals'=>"SELECT id,approval_type,reference_type,reference_id,assigned_role_code,status,decision_note,decided_at,created_at FROM approvals ORDER BY id DESC LIMIT 300",
+  'documents'=>"SELECT id,document_type,title,reference_type,reference_id,file_path,status,created_at FROM documents ORDER BY id DESC LIMIT 300",
+  'notifications'=>"SELECT id,user_id,role_code,severity,title,message,read_at,created_at FROM notifications ORDER BY id DESC LIMIT 300",
+  'audit'=>"SELECT a.id,a.created_at,u.name user_name,u.email,a.action,a.entity_type,a.entity_id,a.ip_address FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 300",
+  'price_history'=>"SELECT ph.id,p.name tea,pp.grams,ph.old_mrp,ph.new_mrp,ph.reason,ph.effective_at FROM product_price_history ph JOIN product_packs pp ON pp.id=ph.product_pack_id JOIN products p ON p.id=pp.product_id ORDER BY ph.id DESC LIMIT 300"
+ ];
+ if(!isset($map[$module])) out(['ok'=>false,'code'=>'INVALID_MODULE'],422);
+ $rows=$pdo->query($map[$module])->fetchAll();
+ out(['ok'=>true,'module'=>$module,'records'=>$rows]);
 }
 
 out(['ok'=>false,'code'=>'NOT_FOUND'],404);
