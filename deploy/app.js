@@ -262,13 +262,155 @@ return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null
 h('div',{className:'stats'},h(Card,{t:'Raw tea received',v:Number(data.raw_received_kg||0).toFixed(2)+' kg',s:'Purchase ledger'}),h(Card,{t:'QC-passed output',v:Number(data.produced_kg||0).toFixed(2)+' kg',s:'Production ledger'}),h(Card,{t:'Recorded wastage',v:Number(data.wastage_kg||0).toFixed(2)+' kg',s:'Production variance'}),h(Card,{t:'Finished stock lines',v:String((data.stock||[]).length),s:'Central inventory'})),
 canTransfer?h('section',{className:'panel formrow'},h('label',{className:'field'},'Finished pack',h('select',{value:packId,onChange:e=>setPackId(e.target.value)},(data.stock||[]).map(x=>h('option',{key:x.pack_id,value:x.pack_id},x.product+' '+x.pack+'g · stock '+x.qty)))),h('label',{className:'field'},'Franchise outlet',h('select',{value:fid,onChange:e=>setFid(e.target.value)},franchises.map(x=>h('option',{key:x.id,value:x.id},x.name)))),h(Field,{label:'Transfer qty',value:qty,onChange:setQty,type:'number'}),h('button',{className:'primary fit',disabled:busy||!(data.stock||[]).length||!franchises.length,onClick:transfer},busy?'Transferring…':'Transfer to outlet')):null,
 h(DataTable,{rows:data.stock||[],cols:[['product','Product'],['category','Category'],['pack','Pack g'],['qty','Central stock'],['mrp','MRP',money]],empty:'No finished goods stock yet. Complete a packaging job to create stock.'}))}
-function Franchises({user}){const[rows,setRows]=React.useState([]),[name,setName]=React.useState(''),[district,setDistrict]=React.useState(''),[tier,setTier]=React.useState('Starter'),[manual,setManual]=React.useState(30),[busy,setBusy]=React.useState(false),[error,setError]=React.useState('');
-async function loadRows(){try{const r=await api('franchises');setRows(r.franchises||[])}catch{setError('Could not load franchise outlets.')}}
-React.useEffect(()=>{loadRows()},[]);
-async function add(){if(!name||user.role!=='OWNER')return;setBusy(true);setError('');try{const pct=tier==='Manual'?Number(manual):D.marginTiers[tier];await api('franchise.create',{method:'POST',body:{code:'TSB-'+Date.now().toString().slice(-7),name,district,margin_mode:tier==='Manual'?'manual':'tier',margin_tier:tier,margin_percent:pct}});setName('');setDistrict('');await loadRows()}catch(e){setError(e.code==='OWNER_REQUIRED'?'Only Founder can create outlets.':'Outlet could not be created.')}finally{setBusy(false)}}
-async function updateMargin(r){if(user.role!=='OWNER')return;const raw=prompt('Set margin % for '+r.name+' (standard: 25 / 27 / 30, or custom):',String(r.margin_percent||25));if(raw===null)return;const pct=Number(raw);if(!Number.isFinite(pct)||pct<=0||pct>=100){setError('Enter a valid margin percentage between 0 and 100.');return}setBusy(true);setError('');try{await api('franchise.margin.update',{method:'POST',body:{id:Number(r.id),margin_percent:pct}});await loadRows()}catch(e){setError('Margin update failed: '+(e.code||'ERROR'))}finally{setBusy(false)}}
-return h(React.Fragment,null,h('section',{className:'moduleHead'},h('small',null,'FRANCHISE NETWORK'),h('h1',null,'Outlets / Franchise'),h('p',null,'25%, 27%, 30% tiers or Founder-approved manual percentage.')),error?h('div',{className:'authError'},error):null,user.role==='OWNER'?h('section',{className:'panel formrow'},h(Field,{label:'Outlet name',value:name,onChange:setName}),h(Field,{label:'District / Upazila',value:district,onChange:setDistrict}),h('label',{className:'field'},'Margin tier',h('select',{value:tier,onChange:e=>setTier(e.target.value)},Object.keys(D.marginTiers).map(x=>h('option',{key:x},x)))),tier==='Manual'?h(Field,{label:'Manual %',value:manual,type:'number',onChange:setManual}):null,h('button',{className:'primary fit',disabled:busy,onClick:add},busy?'Saving…':'Add outlet')):null,
-h(DataTable,{rows,cols:[['code','Code'],['name','Outlet'],['district','District'],['upazila','Upazila'],['margin_tier','Tier'],['margin_percent','Margin %'],['status','Status'],['actions','Actions',(_,r)=>user.role==='OWNER'?h('button',{className:'miniBtn',onClick:()=>updateMargin(r)},'Set margin'):'—']],empty:'No franchise outlets configured yet.'}))}
+
+function Franchises({user}){
+ const[rows,setRows]=React.useState([]),[selected,setSelected]=React.useState(null),[busy,setBusy]=React.useState(false),[error,setError]=React.useState('');
+ const[form,setForm]=React.useState({name:'',division:'',district:'',upazila:'',owner_name:'',owner_phone:'',target_open_date:'',tier:'Starter',manual:30});
+ async function loadRows(){try{const r=await api('franchises');setRows(r.franchises||[])}catch{setError('Could not load franchise outlets.')}}
+ React.useEffect(()=>{loadRows()},[]);
+ async function add(){
+  if(!form.name||user.role!=='OWNER')return;setBusy(true);setError('');
+  try{
+   const pct=form.tier==='Manual'?Number(form.manual):D.marginTiers[form.tier];
+   const r=await api('franchise.create',{method:'POST',body:{code:'TSB-'+Date.now().toString().slice(-7),name:form.name,division:form.division,district:form.district,upazila:form.upazila,owner_name:form.owner_name,owner_phone:form.owner_phone,target_open_date:form.target_open_date||undefined,margin_tier:form.tier,margin_percent:pct}});
+   setForm({name:'',division:'',district:'',upazila:'',owner_name:'',owner_phone:'',target_open_date:'',tier:'Starter',manual:30});await loadRows();setSelected(Number(r.id));
+  }catch(e){setError('Outlet could not be created: '+(e.code||'ERROR'))}finally{setBusy(false)}
+ }
+ async function updateMargin(r){
+  if(user.role!=='OWNER')return;const raw=prompt('Set margin % for '+r.name+' (standard: 25 / 27 / 30, or custom):',String(r.margin_percent||25));if(raw===null)return;
+  const pct=Number(raw);if(!Number.isFinite(pct)||pct<=0||pct>=100){setError('Enter a valid margin percentage between 0 and 100.');return}
+  setBusy(true);setError('');try{await api('franchise.margin.update',{method:'POST',body:{id:Number(r.id),margin_percent:pct}});await loadRows()}catch(e){setError('Margin update failed: '+(e.code||'ERROR'))}finally{setBusy(false)}
+ }
+ const createForm=user.role==='OWNER'?h('section',{className:'panel outletCreate'},h(Title,{t:'Create outlet pipeline record',tag:'START AT LEAD'}),
+  h('div',{className:'formrow outletCreateGrid'},
+   h(Field,{label:'Outlet name',value:form.name,onChange:v=>setForm({...form,name:v})}),
+   h(Field,{label:'Division',value:form.division,onChange:v=>setForm({...form,division:v})}),
+   h(Field,{label:'District',value:form.district,onChange:v=>setForm({...form,district:v})}),
+   h(Field,{label:'Upazila',value:form.upazila,onChange:v=>setForm({...form,upazila:v})}),
+   h(Field,{label:'Target opening',value:form.target_open_date,onChange:v=>setForm({...form,target_open_date:v}),type:'date'}),
+   h(Field,{label:'Owner / franchisee',value:form.owner_name,onChange:v=>setForm({...form,owner_name:v})}),
+   h(Field,{label:'Owner phone',value:form.owner_phone,onChange:v=>setForm({...form,owner_phone:v})}),
+   h('label',{className:'field'},'Margin tier',h('select',{value:form.tier,onChange:e=>setForm({...form,tier:e.target.value})},Object.keys(D.marginTiers).map(x=>h('option',{key:x},x)))),
+   form.tier==='Manual'?h(Field,{label:'Manual %',value:form.manual,onChange:v=>setForm({...form,manual:v}),type:'number'}):null,
+   h('button',{className:'primary fit',disabled:busy,onClick:add},busy?'Creating…':'Create pipeline outlet')
+  )):null;
+ const table=h(DataTable,{rows,cols:[
+  ['code','Code'],['name','Outlet'],['division','Division'],['district','District'],['upazila','Upazila'],['pipeline_stage','Pipeline'],['health','Health'],
+  ['sales_30d','30d sales',money],['stock_value','Stock',money],['margin_percent','Margin %'],['status','Status'],
+  ['open','360°',(_,r)=>h('button',{className:'miniBtn',onClick:()=>setSelected(Number(r.id))},'Open 360°')],
+  ['margin','Margin',(_,r)=>user.role==='OWNER'?h('button',{className:'miniBtn',onClick:()=>updateMargin(r)},'Set margin'):'Owner only']
+ ],empty:'No franchise outlets configured yet.'});
+ return h(React.Fragment,null,
+  h('section',{className:'moduleHead'},h('small',null,'FRANCHISE NETWORK · PATCH 1'),h('h1',null,'Outlets / Franchise'),h('p',null,'Outlet 360°, opening pipeline, territory, checklists, people, training, health and lifecycle history.')),
+  error?h('div',{className:'authError'},error):null,createForm,
+  h('section',{className:'panel'},h(Title,{t:'Network outlet register',tag:rows.length+' OUTLETS'}),table),
+  selected?h(Outlet360,{fid:selected,user,onClose:()=>setSelected(null),onChanged:loadRows}):null
+ );
+}
+
+function Outlet360({fid,user,onClose,onChanged}){
+ const[data,setData]=React.useState(null),[busy,setBusy]=React.useState(false),[msg,setMsg]=React.useState(''),[tab,setTab]=React.useState('overview');
+ const[profile,setProfile]=React.useState({}),[pipeline,setPipeline]=React.useState({});
+ const[staffForm,setStaffForm]=React.useState({name:'',staff_role:'Outlet Staff',phone:'',joined_at:''});
+ const[trainingForm,setTrainingForm]=React.useState({course_title:'POS & Retail Operations',status:'pending',outlet_staff_id:'',trainer:'',expires_at:''});
+ const[docForm,setDocForm]=React.useState({document_type:'franchise_document',title:'',file_path:''});
+ const[healthForm,setHealthForm]=React.useState({sales_score:0,stock_score:0,settlement_score:0,compliance_score:0,notes:''});
+ const canOps=['OWNER','OPERATIONS'].includes(user.role),canField=['OWNER','OPERATIONS','REGIONAL'].includes(user.role);
+ async function load(){try{const r=await api('franchise.360?franchise_id='+encodeURIComponent(fid));setData(r);setProfile({...r.profile,name:r.franchise.name,district:r.franchise.district||'',upazila:r.franchise.upazila||'',address:r.franchise.address||''});setPipeline({...r.pipeline})}catch(e){setMsg('Outlet 360° could not be loaded: '+(e.code||'ERROR'))}}
+ React.useEffect(()=>{load()},[fid]);
+ async function act(fn){setBusy(true);setMsg('');try{await fn();await load();if(onChanged)await onChanged()}catch(e){setMsg(e.code||e.message||'ACTION_FAILED')}finally{setBusy(false)}}
+ async function saveProfile(){await act(()=>api('franchise.profile.update',{method:'POST',body:{franchise_id:fid,...profile}}))}
+ async function savePipeline(){await act(()=>api('franchise.pipeline.update',{method:'POST',body:{franchise_id:fid,stage:pipeline.stage,target_open_date:pipeline.target_open_date||null,next_action:pipeline.next_action||'',blocking_reason:pipeline.blocking_reason||''}}))}
+ async function toggleCheck(item){await act(()=>api('franchise.checklist.toggle',{method:'POST',body:{franchise_id:fid,id:Number(item.id),completed:!Number(item.completed),label:item.item_label,notes:item.notes||''}}))}
+ async function addStaff(){if(!staffForm.name||!staffForm.staff_role)return;await act(async()=>{await api('franchise.staff.create',{method:'POST',body:{franchise_id:fid,...staffForm}});setStaffForm({name:'',staff_role:'Outlet Staff',phone:'',joined_at:''})})}
+ async function toggleStaff(r){await act(()=>api('franchise.staff.toggle',{method:'POST',body:{franchise_id:fid,id:Number(r.id),active:!Number(r.active)}}))}
+ async function saveTraining(){if(!trainingForm.course_title)return;await act(async()=>{await api('franchise.training.save',{method:'POST',body:{franchise_id:fid,...trainingForm,outlet_staff_id:trainingForm.outlet_staff_id?Number(trainingForm.outlet_staff_id):null}});setTrainingForm({course_title:'POS & Retail Operations',status:'pending',outlet_staff_id:'',trainer:'',expires_at:''})})}
+ async function saveDocument(){if(!docForm.title)return;await act(async()=>{await api('franchise.document.create',{method:'POST',body:{franchise_id:fid,...docForm}});setDocForm({document_type:'franchise_document',title:'',file_path:''})})}
+ async function saveHealth(){await act(()=>api('franchise.health.save',{method:'POST',body:{franchise_id:fid,...healthForm}}))}
+ if(!data)return msg?h('div',{className:'authError'},msg):h(Loading);
+
+ const f=data.franchise,p=data.profile||{},pl=data.pipeline||{},ch=data.checklists||{},health=data.health_latest;
+ const stages=['lead','verification','agreement','shop_ready','training','stock_ready','pos_ready','launch','live'].concat(user.role==='OWNER'?['suspended','closed']:[]);
+ const tabs=[['overview','Overview'],['opening','Opening'],['people','People & Training'],['documents','Documents'],['health','Health'],['closure','Closure'],['timeline','Timeline']];
+ function checklist(type){
+  const rows=ch[type]||[],progress=ch[type+'_progress']||0;
+  const items=h('div',{className:'checklist'},rows.map(x=>h('button',{key:x.id,className:Number(x.completed)?'done':'',disabled:busy||!canField,onClick:()=>toggleCheck(x)},h('i',null,Number(x.completed)?'✓':'○'),h('span',null,x.item_label),h('small',null,x.required?'Required':'Optional'))));
+  return h('section',{className:'panel checklistPanel'},h(Title,{t:type==='opening'?'Opening checklist':'Closure checklist',tag:String(progress)+'%'}),items);
+ }
+ const summary=h('div',{className:'outlet360Summary'},
+  h('div',null,h('span',null,'Pipeline'),h('b',null,String(pl.stage||'lead').replaceAll('_',' '))),
+  h('div',null,h('span',null,'Health'),h('b',null,health?String(health.health).toUpperCase():'NEW')),
+  h('div',null,h('span',null,'30d Sales'),h('b',null,money(data.sales?.sales_30d||0))),
+  h('div',null,h('span',null,'Outlet Stock'),h('b',null,money(data.stock_value||0))),
+  h('div',null,h('span',null,'Opening'),h('b',null,String(ch.opening_progress||0)+'%')),
+  h('div',null,h('span',null,'Margin'),h('b',null,String(f.margin_percent||0)+'%'))
+ );
+ const profileFacts=h('div',{className:'profileFacts'},
+  h('div',null,h('span',null,'Owner'),h('b',null,p.owner_name||'—'),h('small',null,p.owner_phone||'')),
+  h('div',null,h('span',null,'Territory'),h('b',null,[p.division,f.district,f.upazila].filter(Boolean).join(' → ')||'Unassigned'),h('small',null,p.territory_code||'')),
+  h('div',null,h('span',null,'Agreement'),h('b',null,p.agreement_no||'—'),h('small',null,p.agreement_date||'')),
+  h('div',null,h('span',null,'Target / Opened'),h('b',null,p.target_open_date||'—'),h('small',null,f.opened_at?'Opened '+f.opened_at:'Not live yet'))
+ );
+ const profileEditor=canOps?h('div',{className:'formrow outletProfileForm'},
+  h(Field,{label:'Outlet name',value:profile.name||'',onChange:v=>setProfile({...profile,name:v})}),
+  h(Field,{label:'Owner name',value:profile.owner_name||'',onChange:v=>setProfile({...profile,owner_name:v})}),
+  h(Field,{label:'Owner phone',value:profile.owner_phone||'',onChange:v=>setProfile({...profile,owner_phone:v})}),
+  h(Field,{label:'Owner email',value:profile.owner_email||'',onChange:v=>setProfile({...profile,owner_email:v}),type:'email'}),
+  h(Field,{label:'Division',value:profile.division||'',onChange:v=>setProfile({...profile,division:v})}),
+  h(Field,{label:'District',value:profile.district||'',onChange:v=>setProfile({...profile,district:v})}),
+  h(Field,{label:'Upazila',value:profile.upazila||'',onChange:v=>setProfile({...profile,upazila:v})}),
+  h(Field,{label:'Territory code',value:profile.territory_code||'',onChange:v=>setProfile({...profile,territory_code:v})}),
+  h(Field,{label:'Agreement no',value:profile.agreement_no||'',onChange:v=>setProfile({...profile,agreement_no:v})}),
+  h(Field,{label:'Target open',value:profile.target_open_date||'',onChange:v=>setProfile({...profile,target_open_date:v}),type:'date'}),
+  h('button',{className:'primary fit',disabled:busy,onClick:saveProfile},'Save profile')
+ ):null;
+ const stageOrder=['lead','verification','agreement','shop_ready','training','stock_ready','pos_ready','launch','live'],stageIndex=stageOrder.indexOf(pl.stage);
+ const rail=h('div',{className:'pipelineRail'},stageOrder.map((x,i)=>h('div',{key:x,className:i<=stageIndex?'passed':''},h('i'),h('span',null,x.replaceAll('_',' ')))));
+ const pipelineEditor=canOps?h('div',{className:'formrow'},
+  h('label',{className:'field'},'Stage',h('select',{value:pipeline.stage||'lead',onChange:e=>setPipeline({...pipeline,stage:e.target.value})},stages.map(x=>h('option',{key:x,value:x},x.replaceAll('_',' '))))),
+  h(Field,{label:'Target opening',value:pipeline.target_open_date||'',onChange:v=>setPipeline({...pipeline,target_open_date:v}),type:'date'}),
+  h(Field,{label:'Next action',value:pipeline.next_action||'',onChange:v=>setPipeline({...pipeline,next_action:v})}),
+  h(Field,{label:'Blocker / reason',value:pipeline.blocking_reason||'',onChange:v=>setPipeline({...pipeline,blocking_reason:v})}),
+  h('button',{className:'primary fit',disabled:busy,onClick:savePipeline},'Update pipeline')
+ ):null;
+
+ let content;
+ if(tab==='overview'){
+  const left=h('section',{className:'panel'},h(Title,{t:'Outlet / owner profile',tag:'360°'}),profileFacts,profileEditor);
+  const right=h('section',{className:'panel'},h(Title,{t:'Opening pipeline',tag:String(pl.stage||'lead').toUpperCase()}),rail,pipelineEditor,pl.next_action?h('div',{className:'notice'},h('b',null,'Next action'),h('span',null,pl.next_action)):null);
+  const live=h('section',{className:'panel'},h(Title,{t:'Current stock / settlement',tag:'LIVE'}),h('div',{className:'miniMetrics'},h('div',null,h('span',null,'Stock lines'),h('b',null,String((data.stock||[]).length))),h('div',null,h('span',null,'30d receipts'),h('b',null,String(data.sales?.receipts_30d||0))),h('div',null,h('span',null,'Last sale'),h('b',null,data.sales?.last_sale_at||'—'))),h(DataTable,{rows:(data.settlements||[]).slice(0,5),cols:[['period_end','Period'],['verified_sales','Sales',money],['earned_margin','Margin',money],['net_payable','Payable',money],['status','Status']],empty:'No settlement history yet.'}));
+  content=h(React.Fragment,null,h('div',{className:'twocol'},left,right),h('div',{className:'twocol'},checklist('opening'),live));
+ }else if(tab==='opening'){
+  const stock=h('section',{className:'panel'},h(Title,{t:'Launch readiness',tag:String(ch.opening_progress||0)+'%'}),h('p',{className:'muted'},'Lead → Verification → Agreement → Shop Ready → Training → Stock Ready → POS Ready → Launch → Live.'),h(DataTable,{rows:data.stock||[],cols:[['product','Product'],['grams','Pack g'],['qty','Qty'],['mrp','MRP',money]],empty:'No opening stock at this outlet yet.'}));
+  content=h('div',{className:'twocol'},checklist('opening'),stock);
+ }else if(tab==='people'){
+  const staffFormView=canOps?h('div',{className:'formrow'},h(Field,{label:'Name',value:staffForm.name,onChange:v=>setStaffForm({...staffForm,name:v})}),h(Field,{label:'Role',value:staffForm.staff_role,onChange:v=>setStaffForm({...staffForm,staff_role:v})}),h(Field,{label:'Phone',value:staffForm.phone,onChange:v=>setStaffForm({...staffForm,phone:v})}),h(Field,{label:'Joined',value:staffForm.joined_at,onChange:v=>setStaffForm({...staffForm,joined_at:v}),type:'date'}),h('button',{className:'primary fit',disabled:busy,onClick:addStaff},'Add staff')):null;
+  const staffTable=h(DataTable,{rows:data.staff||[],cols:[['name','Name'],['staff_role','Role'],['phone','Phone'],['joined_at','Joined'],['active','Active',v=>Number(v)?'Yes':'No'],['action','Action',(_,r)=>canOps?h('button',{className:'miniBtn',onClick:()=>toggleStaff(r)},Number(r.active)?'Deactivate':'Activate'):'—']],empty:'No outlet staff recorded.'});
+  const people=h('section',{className:'panel'},h(Title,{t:'Outlet staff',tag:String((data.staff||[]).filter(x=>Number(x.active)).length)+' ACTIVE'}),staffFormView,staffTable);
+  const trainingFormView=canField?h('div',{className:'formrow'},h(Field,{label:'Course',value:trainingForm.course_title,onChange:v=>setTrainingForm({...trainingForm,course_title:v})}),h('label',{className:'field'},'Staff',h('select',{value:trainingForm.outlet_staff_id,onChange:e=>setTrainingForm({...trainingForm,outlet_staff_id:e.target.value})},h('option',{value:''},'Outlet / all staff'),(data.staff||[]).filter(x=>Number(x.active)).map(x=>h('option',{key:x.id,value:x.id},x.name)))),h('label',{className:'field'},'Status',h('select',{value:trainingForm.status,onChange:e=>setTrainingForm({...trainingForm,status:e.target.value})},['pending','scheduled','completed','expired'].map(x=>h('option',{key:x},x)))),h(Field,{label:'Trainer',value:trainingForm.trainer,onChange:v=>setTrainingForm({...trainingForm,trainer:v})}),h('button',{className:'primary fit',disabled:busy,onClick:saveTraining},'Save training')):null;
+  const trainingTable=h(DataTable,{rows:data.training||[],cols:[['course_title','Course'],['staff_name','Staff'],['status','Status'],['completed_at','Completed'],['expires_at','Expires'],['trainer','Trainer']],empty:'No training records yet.'});
+  const training=h('section',{className:'panel'},h(Title,{t:'Training',tag:'READINESS'}),trainingFormView,trainingTable);
+  content=h('div',{className:'twocol'},people,training);
+ }else if(tab==='documents'){
+  const form=canOps?h('div',{className:'formrow'},h(Field,{label:'Document title',value:docForm.title,onChange:v=>setDocForm({...docForm,title:v})}),h(Field,{label:'Type',value:docForm.document_type,onChange:v=>setDocForm({...docForm,document_type:v})}),h(Field,{label:'File / reference path',value:docForm.file_path,onChange:v=>setDocForm({...docForm,file_path:v})}),h('button',{className:'primary fit',disabled:busy,onClick:saveDocument},'Register document')):null;
+  content=h('section',{className:'panel'},h(Title,{t:'Outlet documents',tag:'REGISTRY'}),form,h(DataTable,{rows:data.documents||[],cols:[['created_at','Date'],['document_type','Type'],['title','Title'],['file_path','Reference'],['status','Status']],empty:'No outlet documents registered.'}));
+ }else if(tab==='health'){
+  const score=health?h('div',{className:'healthHero'},h('b',null,Number(health.total_score||0).toFixed(1)),h('span',null,String(health.health).toUpperCase()),h('small',null,'Sales 35% · Stock 25% · Settlement 25% · Compliance 15%')):h(Empty,{text:'No health check yet.'});
+  const inputs=canField?h('div',{className:'healthInputs'},[['sales_score','Sales score'],['stock_score','Stock score'],['settlement_score','Settlement score'],['compliance_score','Compliance score']].map(([k,l])=>h(Field,{key:k,label:l,value:healthForm[k],onChange:v=>setHealthForm({...healthForm,[k]:v}),type:'number'})),h(Field,{label:'Notes',value:healthForm.notes,onChange:v=>setHealthForm({...healthForm,notes:v})}),h('button',{className:'primary fit',disabled:busy,onClick:saveHealth},'Record health check')):null;
+  const current=h('section',{className:'panel'},h(Title,{t:'Outlet health score',tag:health?String(health.health).toUpperCase():'NEW'}),score,inputs);
+  const history=h('section',{className:'panel'},h(Title,{t:'Health history',tag:'TREND'}),h(DataTable,{rows:data.health_history||[],cols:[['checked_at','Checked'],['total_score','Score'],['health','Health'],['sales_score','Sales'],['stock_score','Stock'],['settlement_score','Settlement'],['compliance_score','Compliance']],empty:'No health history yet.'}));
+  content=h('div',{className:'twocol'},current,history);
+ }else if(tab==='closure'){
+  const controls=h('section',{className:'panel'},h(Title,{t:'Suspension / closure control',tag:'OWNER FINAL'}),h('p',{className:'muted'},'Operations can prepare the closure checklist. Only Founder can move the pipeline to Suspended or Closed.'),p.operational_state==='suspended'?h('div',{className:'notice'},h('b',null,'SUSPENDED'),h('span',null,p.suspension_reason||'Owner-approved suspension')):null,p.closure_reason?h('div',{className:'notice'},h('b',null,'Closure reason'),h('span',null,p.closure_reason)):null);
+  content=h('div',{className:'twocol'},checklist('closure'),controls);
+ }else{
+  const rows=data.timeline||[];
+  content=h('section',{className:'panel'},h(Title,{t:'Complete outlet timeline',tag:String(rows.length)+' EVENTS'}),h('div',{className:'timeline outletTimeline'},rows.map((e,i)=>h('div',{className:'timelineRow',key:i},h('i'),h('div',null,h('span',null,(e.occurred_at||'')+' · '+String(e.event_type||'').replaceAll('_',' ')),h('b',null,e.title||'Event'),h('p',null,e.detail||''))))));
+ }
+ const head=h('div',{className:'outlet360Head'},h('div',null,h('button',{className:'miniBtn',onClick:onClose},'← Network'),h('small',null,f.code+' · '+(p.division||'Unassigned')+' / '+(f.district||'Unassigned')),h('h2',null,f.name),h('p',null,(p.owner_name||'Owner not set')+(p.owner_phone?' · '+p.owner_phone:''))),h('div',{className:'outlet360Badges'},h(Pill,{kind:f.status==='active'?'success':''},String(f.status).toUpperCase()),h(Pill,null,String(pl.stage||'lead').replaceAll('_',' ').toUpperCase())));
+ const nav=h('div',{className:'outletTabs'},tabs.map(([k,l])=>h('button',{key:k,className:tab===k?'active':'',onClick:()=>setTab(k)},l)));
+ return h('section',{className:'outlet360'},head,summary,msg?h('div',{className:'notice'},h('b',null,'Outlet 360°'),h('span',null,msg)):null,nav,content);
+}
 function POS(){const[cart,setCart]=React.useState([]),[franchises,setFranchises]=React.useState([]),[stock,setStock]=React.useState([]),[fid,setFid]=React.useState(''),[busy,setBusy]=React.useState(false),[msg,setMsg]=React.useState('');
 React.useEffect(()=>{api('franchises').then(r=>{const rows=(r.franchises||[]).filter(x=>x.status!=='closed');setFranchises(rows);if(rows[0])setFid(String(rows[0].id))}).catch(()=>{})},[]);
 React.useEffect(()=>{if(!fid){setStock([]);return}api('inventory.franchise?franchise_id='+encodeURIComponent(fid)).then(r=>setStock(r.stock||[])).catch(()=>setStock([]))},[fid]);
