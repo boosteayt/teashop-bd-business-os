@@ -131,3 +131,17 @@ Marketing policy remains HQ-controlled. Operations tracks outlet execution only:
 
 ### Outlet 360 integration
 Patch 2 records are surfaced under Outlet 360° -> Daily Ops, and every major mutation writes both the central audit log and outlet operational timeline.
+
+
+## Operations Patch 3 — Intelligence
+Patch 3 adds operational intelligence without giving Operations pricing, company-finance or inventory-adjustment authority.
+
+Sales intelligence uses verified POS records for 7-day, 30-day and month-to-date performance. Outlet targets are stored separately and do not alter MRP or franchise margin.
+
+Stock intelligence derives on-hand quantity from the inventory ledger and combines it with POS item velocity. Default policy is 7 minimum days cover, 21 target days cover, 60 maximum days cover and 30 dead-stock days. Policies can be overridden by outlet/SKU.
+
+Physical counts create mismatch records only; they never auto-post inventory adjustments.
+
+Settlement aging is computed from non-paid settlement periods. Positive net payable is shown as franchise payable and negative net payable as company receivable.
+
+Healthy-business score is a management ranking signal: Sales Target Achievement 40%, Outlet Health 25%, Inventory Health 20%, Settlement Discipline 15%.
