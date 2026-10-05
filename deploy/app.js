@@ -111,7 +111,7 @@ function OperationsDashboard(){
  const[data,setData]=React.useState(null),[error,setError]=React.useState('');
  React.useEffect(()=>{api('operations.dashboard').then(setData).catch(e=>setError('Operations command center could not be loaded: '+(e.code||'ERROR')))},[]);
  if(!data)return error?h('div',{className:'authError'},error):h(Loading);
- const n=data.network||{},s=data.sales||{},st=data.settlement||{},perf=data.performance;
+ const n=data.network||{},s=data.sales||{},st=data.settlement||{},perf=data.performance,w=data.work||{};
  const growth=s.growth_percent===null||s.growth_percent===undefined?'New baseline':((Number(s.growth_percent)>=0?'+':'')+Number(s.growth_percent).toFixed(1)+'% vs previous month');
  return h(React.Fragment,null,
   h('section',{className:'hero opsHero'},
@@ -129,6 +129,12 @@ function OperationsDashboard(){
    h(Card,{t:'Franchise margin earned',v:money(s.earned_margin||0),s:'25 / 27 / 30 / approved custom'}),
    h(Card,{t:'Outlet pipeline',v:String(n.pipeline_outlets||0),s:'Pipeline + setup'}),
    h(Card,{t:'Performance',v:perf?Number(perf.total_score||0).toFixed(1):'—',s:perf?(String(perf.status||'draft').toUpperCase()+' · '+perf.period_start+' → '+perf.period_end):'Awaiting approved scorecard'})
+  ),
+  h('div',{className:'stats opsWorkStats'},
+   h(Card,{t:'Open tasks',v:String(w.open_tasks||0),s:String(w.overdue_tasks||0)+' overdue'}),
+   h(Card,{t:'Support tickets',v:String(w.open_tickets||0),s:String(w.overdue_tickets||0)+' overdue'}),
+   h(Card,{t:'Field visits',v:String(w.visits_next_7d||0),s:'scheduled in next 7 days'}),
+   h(Card,{t:'Compliance & training',v:String(w.open_compliance||0),s:String(w.training_attention||0)+' training attention'})
   ),
   h('div',{className:'twocol'},
    h('section',{className:'panel'},h(Title,{t:'Low-performing active outlets',tag:'30-DAY SALES'}),h(DataTable,{rows:data.low_performers||[],cols:[['code','Code'],['name','Outlet'],['district','District'],['sales_30d','30d sales',money],['receipts_30d','Receipts'],['stock_value','Stock value',money],['health','Health']],empty:'No active outlet performance data yet.'})),
