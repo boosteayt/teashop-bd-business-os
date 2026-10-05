@@ -410,6 +410,147 @@ if($route==='inventory.transfer.create' && $method==='POST'){
 
 
 
+
+if($route==='operations.intelligence'){
+ $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
+ $monthStart=date('Y-m-01');$today=date('Y-m-d');
+
+ $outlets=$pdo->query("SELECT f.id,f.code,f.name,f.district,f.upazila,f.status,f.opened_at,
+   COALESCE((SELECT oh.total_score FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),0) health_score,
+   COALESCE((SELECT oh.health FROM outlet_health_checks oh WHERE oh.franchise_id=f.id ORDER BY oh.checked_at DESC,oh.id DESC LIMIT 1),'new') health,
+   COALESCE((SELECT ost.sales_target FROM outlet_sales_targets ost WHERE ost.franchise_id=f.id AND CURDATE() BETWEEN ost.period_start AND ost.period_end ORDER BY ost.id DESC LIMIT 1),0) sales_target,
+   COALESCE((SELECT ost.receipt_target FROM outlet_sales_targets ost WHERE ost.franchise_id=f.id AND CURDATE() BETWEEN ost.period_start AND ost.period_end ORDER BY ost.id DESC LIMIT 1),0) receipt_target
+   FROM franchises f WHERE f.status<>'closed' ORDER BY f.name")->fetchAll();
+
+ $salesRows=$pdo->query("SELECT franchise_id,
+   SUM(CASE WHEN sold_at>=DATE_SUB(NOW(),INTERVAL 7 DAY) THEN gross_amount ELSE 0 END) sales_7d,
+   SUM(CASE WHEN sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) THEN gross_amount ELSE 0 END) sales_30d,
+   SUM(CASE WHEN DATE(sold_at)>=DATE_FORMAT(CURDATE(),'%Y-%m-01') THEN gross_amount ELSE 0 END) sales_mtd,
+   SUM(CASE WHEN DATE(sold_at)>=DATE_FORMAT(CURDATE(),'%Y-%m-01') THEN 1 ELSE 0 END) receipts_mtd,
+   MAX(sold_at) last_sale_at
+   FROM pos_sales GROUP BY franchise_id")->fetchAll();
+ $salesMap=[];foreach($salesRows as $r)$salesMap[(int)$r['franchise_id']]=$r;
+
+ $packSalesRows=$pdo->query("SELECT ps.franchise_id,psi.product_pack_id,
+   SUM(CASE WHEN ps.sold_at>=DATE_SUB(NOW(),INTERVAL 7 DAY) THEN psi.qty ELSE 0 END) qty_7d,
+   SUM(CASE WHEN ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) THEN psi.qty ELSE 0 END) qty_30d,
+   MAX(ps.sold_at) last_sale_at
+   FROM pos_sales ps JOIN pos_sale_items psi ON psi.pos_sale_id=ps.id GROUP BY ps.franchise_id,psi.product_pack_id")->fetchAll();
+ $packSales=[];foreach($packSalesRows as $r)$packSales[(int)$r['franchise_id'].':'.(int)$r['product_pack_id']]=$r;
+
+ $stockRows=$pdo->query("SELECT il.location_id franchise_id,il.product_pack_id,p.name product,pp.grams,pp.mrp,
+   SUM(CASE WHEN il.movement_type IN('opening','production_in','transfer_in','return') THEN il.qty
+            WHEN il.movement_type IN('transfer_out','sale','damage') THEN -il.qty ELSE il.qty END) stock_qty,
+   MAX(il.created_at) last_stock_at
+   FROM inventory_ledger il JOIN product_packs pp ON pp.id=il.product_pack_id JOIN products p ON p.id=pp.product_id
+   WHERE il.location_type='franchise' AND il.location_id IS NOT NULL
+   GROUP BY il.location_id,il.product_pack_id,p.name,pp.grams,pp.mrp")->fetchAll();
+
+ $polRows=$pdo->query("SELECT franchise_id,product_pack_id,min_days_cover,target_days_cover,max_days_cover,dead_stock_days FROM outlet_inventory_policies")->fetchAll();
+ $pol=[];foreach($polRows as $r)$pol[(int)$r['franchise_id'].':'.(int)$r['product_pack_id']]=$r;
+
+ $countRows=$pdo->query("SELECT sc.* FROM outlet_stock_counts sc
+   JOIN (SELECT franchise_id,product_pack_id,MAX(id) max_id FROM outlet_stock_counts GROUP BY franchise_id,product_pack_id) x ON x.max_id=sc.id")->fetchAll();
+ $countMap=[];foreach($countRows as $r)$countMap[(int)$r['franchise_id'].':'.(int)$r['product_pack_id']]=$r;
+
+ $inventory=[];$summary=['low'=>0,'overstock'=>0,'dead'=>0,'out_of_stock'=>0,'mismatch'=>0,'reorder_units'=>0,'reorder_value'=>0.0];
+ foreach($stockRows as $r){
+  $fid=(int)$r['franchise_id'];$pid=(int)$r['product_pack_id'];$key=$fid.':'.$pid;
+  $s=$packSales[$key]??['qty_7d'=>0,'qty_30d'=>0,'last_sale_at'=>null];
+  $policy=$pol[$key]??($pol[$fid.':0']??['min_days_cover'=>7,'target_days_cover'=>21,'max_days_cover'=>60,'dead_stock_days'=>30]);
+  $stock=max(0,(float)$r['stock_qty']);$q7=(float)($s['qty_7d']??0);$q30=(float)($s['qty_30d']??0);$daily=$q30/30;
+  $days=$daily>0?round($stock/$daily,1):null;
+  $lastSale=$s['last_sale_at']??null;$daysSince=$lastSale?max(0,(int)floor((time()-strtotime($lastSale))/86400)):9999;
+  $movement='steady';
+  if($q30<=0 && $daysSince>=(int)$policy['dead_stock_days'])$movement='dead';
+  elseif($q7/7 > ($q30/30)*1.25 && $q7>0)$movement='fast';
+  elseif($q30>0 && $q7/7 < ($q30/30)*0.60)$movement='slow';
+  $stockStatus='healthy';
+  if($stock<=0)$stockStatus='out_of_stock';
+  elseif($movement==='dead')$stockStatus='dead';
+  elseif($days!==null && $days<(float)$policy['min_days_cover'])$stockStatus='low';
+  elseif($days!==null && $days>(float)$policy['max_days_cover'])$stockStatus='overstock';
+  $reorder=$daily>0?max(0,(int)ceil(((float)$policy['target_days_cover']*$daily)-$stock)):0;
+  $cnt=$countMap[$key]??null;$mismatch=$cnt && abs((float)$cnt['variance_qty'])>0.001;
+  if(isset($summary[$stockStatus]))$summary[$stockStatus]++;if($mismatch)$summary['mismatch']++;$summary['reorder_units']+=$reorder;$summary['reorder_value']+=$reorder*(float)$r['mrp'];
+  $inventory[]=[
+   'franchise_id'=>$fid,'product_pack_id'=>$pid,'product'=>$r['product'],'grams'=>(int)$r['grams'],'mrp'=>(float)$r['mrp'],
+   'stock_qty'=>round($stock,3),'sales_qty_7d'=>round($q7,3),'sales_qty_30d'=>round($q30,3),'daily_velocity'=>round($daily,3),
+   'days_cover'=>$days,'movement_class'=>$movement,'stock_status'=>$stockStatus,'suggested_reorder_qty'=>$reorder,'suggested_reorder_value'=>round($reorder*(float)$r['mrp'],2),
+   'last_sale_at'=>$lastSale,'last_stock_at'=>$r['last_stock_at'],'last_counted_at'=>$cnt['counted_at']??null,'variance_qty'=>$cnt?(float)$cnt['variance_qty']:0,'variance_value'=>$cnt?(float)$cnt['variance_value']:0
+  ];
+ }
+
+ $settlements=$pdo->query("SELECT s.id,s.franchise_id,f.code outlet_code,f.name outlet,s.period_start,s.period_end,s.verified_sales,s.earned_margin,s.previous_balance,s.net_payable,s.status,
+   GREATEST(DATEDIFF(CURDATE(),s.period_end),0) age_days
+   FROM settlements s JOIN franchises f ON f.id=s.franchise_id WHERE s.status<>'paid'
+   ORDER BY age_days DESC,ABS(s.net_payable) DESC")->fetchAll();
+ $aging=['current'=>0.0,'d1_7'=>0.0,'d8_15'=>0.0,'d16_30'=>0.0,'d30_plus'=>0.0,'company_receivable'=>0.0,'franchise_payable'=>0.0];
+ foreach($settlements as &$r){
+  $age=(int)$r['age_days'];$amt=abs((float)$r['net_payable']);$r['direction']=(float)$r['net_payable']>=0?'franchise_payable':'company_receivable';
+  $r['aging_bucket']=$age===0?'current':($age<=7?'1-7':($age<=15?'8-15':($age<=30?'16-30':'30+')));
+  if($age===0)$aging['current']+=$amt;elseif($age<=7)$aging['d1_7']+=$amt;elseif($age<=15)$aging['d8_15']+=$amt;elseif($age<=30)$aging['d16_30']+=$amt;else$aging['d30_plus']+=$amt;
+  $aging[$r['direction']]+=$amt;
+ }unset($r);
+
+ $rank=[];
+ foreach($outlets as $o){
+  $fid=(int)$o['id'];$s=$salesMap[$fid]??['sales_7d'=>0,'sales_30d'=>0,'sales_mtd'=>0,'receipts_mtd'=>0,'last_sale_at'=>null];
+  $target=(float)$o['sales_target'];$achievement=$target>0?round((float)$s['sales_mtd']/$target*100,1):0;
+  $last=$s['last_sale_at']??null;$inactive=$last?max(0,(int)floor((time()-strtotime($last))/86400)):($o['opened_at']?max(0,(int)floor((time()-strtotime($o['opened_at']))/86400)):9999);
+  $posStatus=$inactive>=7?'critical':($inactive>=3?'watch':'active');
+  $outInv=array_values(array_filter($inventory,fn($x)=>(int)$x['franchise_id']===$fid));
+  $goodInv=count(array_filter($outInv,fn($x)=>in_array($x['stock_status'],['healthy','low'],true)));$invScore=count($outInv)?round($goodInv/count($outInv)*100,1):0;
+  $overdue=count(array_filter($settlements,fn($x)=>(int)$x['franchise_id']===$fid && (int)$x['age_days']>7));
+  $settleScore=$overdue===0?100:max(0,100-($overdue*25));
+  $healthy=round(min(100,$achievement)*0.40+min(100,(float)$o['health_score'])*0.25+$invScore*0.20+$settleScore*0.15,1);
+  $rank[]=['franchise_id'=>$fid,'code'=>$o['code'],'outlet'=>$o['name'],'district'=>$o['district'],'upazila'=>$o['upazila'],'status'=>$o['status'],
+   'sales_7d'=>(float)$s['sales_7d'],'sales_30d'=>(float)$s['sales_30d'],'sales_mtd'=>(float)$s['sales_mtd'],'receipts_mtd'=>(int)$s['receipts_mtd'],
+   'sales_target'=>$target,'target_achievement'=>$achievement,'last_sale_at'=>$last,'inactive_days'=>$inactive,'pos_status'=>$posStatus,
+   'health'=>$o['health'],'health_score'=>(float)$o['health_score'],'inventory_score'=>$invScore,'settlement_score'=>$settleScore,'healthy_business_score'=>$healthy];
+ }
+ usort($rank,fn($a,$b)=>$b['healthy_business_score']<=>$a['healthy_business_score']);
+ $top=array_slice($rank,0,10);$bottom=array_slice(array_reverse($rank),0,10);
+
+ out(['ok'=>true,'period'=>['month_start'=>$monthStart,'today'=>$today],
+  'summary'=>['inventory'=>$summary,'no_sale_3d'=>count(array_filter($rank,fn($r)=>$r['inactive_days']>=3)),'no_sale_7d'=>count(array_filter($rank,fn($r)=>$r['inactive_days']>=7)),'open_settlements'=>count($settlements)],
+  'outlets'=>$rank,'inventory'=>$inventory,'settlements'=>$settlements,'aging'=>$aging,'top'=>$top,'bottom'=>$bottom]);
+}
+
+if($route==='operations.target.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $start=(string)($body['period_start']??date('Y-m-01'));$end=(string)($body['period_end']??date('Y-m-t'));$target=max(0,(float)($body['sales_target']??0));$receipts=max(0,(int)($body['receipt_target']??0));
+ $q=$pdo->prepare("INSERT INTO outlet_sales_targets(franchise_id,period_start,period_end,sales_target,receipt_target,notes,created_by,approved_by) VALUES(?,?,?,?,?,?,?,?)
+   ON DUPLICATE KEY UPDATE sales_target=VALUES(sales_target),receipt_target=VALUES(receipt_target),notes=VALUES(notes),approved_by=VALUES(approved_by),updated_at=NOW()");
+ $q->execute([$fid,$start,$end,$target,$receipts,$body['notes']??null,(int)$u['id'],$u['role']==='OWNER'?(int)$u['id']:null]);
+ outlet_timeline($pdo,$fid,(int)$u['id'],'sales_target','Sales target set',$start.' → '.$end.' · '.number_format($target,2),'sales_target',null,['sales_target'=>$target,'receipt_target'=>$receipts]);
+ audit($pdo,(int)$u['id'],'target_save','franchise',(string)$fid,['period_start'=>$start,'period_end'=>$end,'sales_target'=>$target,'receipt_target'=>$receipts]);
+ out(['ok'=>true]);
+}
+
+if($route==='operations.inventory_policy.save' && $method==='POST'){
+ csrf();$u=outlet_ops_user(['OWNER','OPERATIONS']);$fid=(int)($body['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);outlet_exists($pdo,$fid);
+ $pid=max(0,(int)($body['product_pack_id']??0));$min=max(1,(float)($body['min_days_cover']??7));$target=max($min,(float)($body['target_days_cover']??21));$max=max($target,(float)($body['max_days_cover']??60));$dead=max(7,(int)($body['dead_stock_days']??30));
+ $q=$pdo->prepare("INSERT INTO outlet_inventory_policies(franchise_id,product_pack_id,min_days_cover,target_days_cover,max_days_cover,dead_stock_days,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?)
+   ON DUPLICATE KEY UPDATE min_days_cover=VALUES(min_days_cover),target_days_cover=VALUES(target_days_cover),max_days_cover=VALUES(max_days_cover),dead_stock_days=VALUES(dead_stock_days),updated_by=VALUES(updated_by),updated_at=NOW()");
+ $q->execute([$fid,$pid,$min,$target,$max,$dead,(int)$u['id'],(int)$u['id']]);
+ audit($pdo,(int)$u['id'],'inventory_policy_save','franchise',(string)$fid,['product_pack_id'=>$pid,'min_days_cover'=>$min,'target_days_cover'=>$target,'max_days_cover'=>$max,'dead_stock_days'=>$dead]);
+ out(['ok'=>true]);
+}
+
+if($route==='operations.stock_count.save' && $method==='POST'){
+ csrf();$u=auth();if(!in_array($u['role'],['OWNER','OPERATIONS','REGIONAL','WAREHOUSE'],true))out(['ok'=>false,'code'=>'ROLE_DENIED'],403);
+ $fid=(int)($body['franchise_id']??0);$pid=(int)($body['product_pack_id']??0);$physical=(float)($body['physical_qty']??0);if($fid<=0||$pid<=0||$physical<0)out(['ok'=>false,'code'=>'INVALID_STOCK_COUNT'],422);outlet_exists($pdo,$fid);
+ $q=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN movement_type IN('opening','production_in','transfer_in','return') THEN qty WHEN movement_type IN('transfer_out','sale','damage') THEN -qty ELSE qty END),0) FROM inventory_ledger WHERE location_type='franchise' AND location_id=? AND product_pack_id=?");$q->execute([$fid,$pid]);$system=(float)$q->fetchColumn();
+ $q=$pdo->prepare("SELECT mrp FROM product_packs WHERE id=?");$q->execute([$pid]);$mrp=$q->fetchColumn();if($mrp===false)out(['ok'=>false,'code'=>'PACK_NOT_FOUND'],404);
+ $variance=round($physical-$system,3);$value=round($variance*(float)$mrp,2);$status=abs($variance)<=0.001?'matched':'review';
+ $q=$pdo->prepare("INSERT INTO outlet_stock_counts(franchise_id,product_pack_id,counted_at,system_qty,physical_qty,variance_qty,variance_value,status,notes,counted_by) VALUES(?,?,NOW(),?,?,?,?,?,?,?)");
+ $q->execute([$fid,$pid,$system,$physical,$variance,$value,$status,$body['notes']??null,(int)$u['id']]);$id=(int)$pdo->lastInsertId();
+ outlet_timeline($pdo,$fid,(int)$u['id'],'stock_count','Physical stock count',$status.' · variance '.$variance,'outlet_stock_count',$id,['product_pack_id'=>$pid,'system_qty'=>$system,'physical_qty'=>$physical,'variance_qty'=>$variance]);
+ audit($pdo,(int)$u['id'],'stock_count','franchise',(string)$fid,['count_id'=>$id,'product_pack_id'=>$pid,'system_qty'=>$system,'physical_qty'=>$physical,'variance_qty'=>$variance,'status'=>$status]);
+ out(['ok'=>true,'id'=>$id,'system_qty'=>$system,'physical_qty'=>$physical,'variance_qty'=>$variance,'variance_value'=>$value,'status'=>$status],201);
+}
+
 if($route==='operations.workboard'){
  $u=outlet_ops_user(['OWNER','OPERATIONS','REGIONAL']);
 
