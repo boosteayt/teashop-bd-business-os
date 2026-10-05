@@ -159,13 +159,13 @@ Implemented:
 - Task escalation level and escalation timestamp
 - Field visit scheduling, completion and follow-up
 - Field inspection scores for cleanliness, branding, display, pricing, POS usage and stock handling
-- Corrective action and next-visit tracking
+- Corrective action, photo/evidence reference and next-visit tracking
 - Support ticket / issue management
 - Ticket categories for Stock, POS, Delivery, Customer, Branding, Payment, Staff/Training and Other
 - Ticket SLA, assignment, resolution and escalation history
 - Communication timeline for Call, WhatsApp, Email, Meeting, Visit and Internal Note
 - Promise date and automatic follow-up task creation
-- Training attention list using existing outlet training records
+- Training attention list plus direct outlet training schedule/record control using existing training records
 - Compliance checks for Branding, Pricing, POS Usage, Stock Handling and Customer Service
 - Automatic corrective-action task for Watch / Non-Compliant checks
 - Compliance resolution workflow
