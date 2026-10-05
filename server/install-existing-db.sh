@@ -63,6 +63,7 @@ mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/seed_c
 echo "Loading 99-SKU tea master..."
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/seed_products.sql"
 mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_business_os_full_roles_modules.sql"
+mysql --protocol=socket -u"$DBUSER" -p"$DBPASS" "$DB" < "${REPO}/database/migrations/2026_10_05_operations_patch1_outlet_network_core.sql"
 echo "Creating first-login users..."
 "$PHPCLI" <<'PHPBOOT'
 <?php
