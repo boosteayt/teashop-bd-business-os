@@ -39,6 +39,7 @@ final class ApiClient {
  private string $base;
  private CurlHandle $ch;
  private ?string $csrf=null;
+ private array $cookies=[];
  public function __construct(string $base){
   $this->base=$base;
   $ch=curl_init();
@@ -47,25 +48,44 @@ final class ApiClient {
   curl_setopt_array($this->ch,[
    CURLOPT_RETURNTRANSFER=>true,
    CURLOPT_HEADER=>false,
-   CURLOPT_COOKIEFILE=>'',
    CURLOPT_CONNECTTIMEOUT=>10,
    CURLOPT_TIMEOUT=>30,
    CURLOPT_FOLLOWLOCATION=>false,
   ]);
  }
  public function __destruct(){ curl_close($this->ch); }
+ private function cookieHeader(): string {
+  $parts=[];
+  foreach($this->cookies as $k=>$v)$parts[]=$k.'='.$v;
+  return implode('; ',$parts);
+ }
  public function request(string $method,string $route,?array $body=null): array {
   $parts=explode('?',$route,2);
   $url=$this->base.'/api/index.php?route='.rawurlencode($parts[0]).(isset($parts[1])?'&'.$parts[1]:'');
   $headers=['Accept: application/json'];
   if($body!==null)$headers[]='Content-Type: application/json';
   if($this->csrf!==null && strtoupper($method)!=='GET')$headers[]='X-CSRF-Token: '.$this->csrf;
+
   curl_setopt_array($this->ch,[
    CURLOPT_URL=>$url,
    CURLOPT_CUSTOMREQUEST=>strtoupper($method),
    CURLOPT_HTTPHEADER=>$headers,
    CURLOPT_POSTFIELDS=>$body!==null?json_encode($body,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null,
+   CURLOPT_COOKIE=>$this->cookieHeader(),
+   CURLOPT_HEADERFUNCTION=>function($ch,string $line): int {
+    if(strncasecmp($line,'Set-Cookie:',11)===0){
+     $cookie=trim(substr($line,11));
+     $pair=explode(';',$cookie,2)[0]??'';
+     if(str_contains($pair,'=')){
+      [$name,$value]=explode('=',$pair,2);
+      $name=trim($name);$value=trim($value);
+      if($name!=='')$this->cookies[$name]=$value;
+     }
+    }
+    return strlen($line);
+   },
   ]);
+
   $raw=curl_exec($this->ch);
   $error=curl_error($this->ch);
   $status=(int)curl_getinfo($this->ch,CURLINFO_RESPONSE_CODE);
@@ -77,7 +97,7 @@ final class ApiClient {
  }
  public function expect(string $method,string $route,?array $body,int $status=200,?string $code=null): array {
   [$got,$data]=$this->request($method,$route,$body);
-  if($got!==$status) fail("HTTP_EXPECTATION_FAILED {$route} expected={$status} got={$got} code=".($data['code']??'none'));
+  if($got!==$status) fail("HTTP_EXPECTATION_FAILED {$route} expected={$status} got={$got} code=".($data['code']??'none')." cookies=".count($this->cookies)." csrf=".($this->csrf!==null?'set':'missing'));
   if($code!==null && ($data['code']??null)!==$code) fail("CODE_EXPECTATION_FAILED {$route} expected={$code} got=".($data['code']??'none'));
   if($status<400 && (($data['ok']??false)!==true)) fail("API_NOT_OK {$route}");
   return $data;
@@ -85,6 +105,7 @@ final class ApiClient {
  public function login(string $email,string $password): array {
   $r=$this->expect('POST','login',['email'=>$email,'password'=>$password],200);
   ok(!empty($r['csrf']),'LOGIN_CSRF_MISSING');
+  ok(isset($this->cookies['TSBOS']) && $this->cookies['TSBOS']!=='','LOGIN_SESSION_COOKIE_MISSING');
   $me=$this->expect('GET','me',null,200);
   ok(!empty($me['csrf']),'ME_CSRF_MISSING');
   $this->csrf=(string)$me['csrf'];
@@ -146,6 +167,7 @@ register_shutdown_function($cleanup);
 
 try{
  echo "=== ROUND 1 OPERATIONS E2E ===\n";
+echo "harness_version=3-explicit-cookie-csrf\n";
  echo "base_url={$baseUrl}\n";
 
  // Preflight.
