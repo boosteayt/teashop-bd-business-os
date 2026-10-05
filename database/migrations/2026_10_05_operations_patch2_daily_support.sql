@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS marketing_executions (
  campaign_code VARCHAR(80) NULL,
  campaign_name VARCHAR(190) NOT NULL,
  status ENUM('planned','ready','live','completed','not_participating') NOT NULL DEFAULT 'planned',
+ priority ENUM('low','medium','high','critical') NOT NULL DEFAULT 'medium',
+ assigned_user_id BIGINT UNSIGNED NULL,
+ due_at DATETIME NULL,
+ escalation_level TINYINT UNSIGNED NOT NULL DEFAULT 0,
+ escalated_at DATETIME NULL,
  start_date DATE NULL,
  end_date DATE NULL,
  assets_ready TINYINT(1) NOT NULL DEFAULT 0,
@@ -140,5 +145,7 @@ CREATE TABLE IF NOT EXISTS marketing_executions (
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
  INDEX idx_marketing_franchise(franchise_id,status),
+ INDEX idx_marketing_assignee(assigned_user_id,status),
+ INDEX idx_marketing_due(status,due_at),
  INDEX idx_marketing_period(start_date,end_date)
 );
