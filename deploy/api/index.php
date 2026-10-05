@@ -570,7 +570,6 @@ if($route==='franchise.create' && $method==='POST'){
 if($route==='franchise.360'){
  auth();$fid=(int)($_GET['franchise_id']??0);if($fid<=0)out(['ok'=>false,'code'=>'INVALID_FRANCHISE'],422);
  $fr=outlet_exists($pdo,$fid);
- ensure_outlet_checklist($pdo,$fid,'opening');ensure_outlet_checklist($pdo,$fid,'closure');
 
  $q=$pdo->prepare("SELECT * FROM outlet_profiles WHERE franchise_id=?");$q->execute([$fid]);$profile=$q->fetch()?:[];
  $q=$pdo->prepare("SELECT * FROM outlet_pipeline WHERE franchise_id=?");$q->execute([$fid]);$pipeline=$q->fetch()?:null;
@@ -734,8 +733,11 @@ if($route==='franchise.territory'){
  auth();
  $rows=$pdo->query("SELECT COALESCE(NULLIF(op.division,''),'Unassigned') division,COALESCE(NULLIF(f.district,''),'Unassigned') district,COALESCE(NULLIF(f.upazila,''),'Unassigned') upazila,
    COUNT(*) total_outlets,SUM(f.status='active') active_outlets,SUM(f.status IN('pipeline','setup')) pipeline_outlets,SUM(f.status IN('watch','critical')) attention_outlets,
-   COALESCE(SUM((SELECT SUM(ps.gross_amount) FROM pos_sales ps WHERE ps.franchise_id=f.id AND ps.sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY))),0) sales_30d
-   FROM franchises f LEFT JOIN outlet_profiles op ON op.franchise_id=f.id WHERE f.status<>'closed'
+   COALESCE(SUM(COALESCE(s.sales_30d,0)),0) sales_30d
+   FROM franchises f
+   LEFT JOIN outlet_profiles op ON op.franchise_id=f.id
+   LEFT JOIN (SELECT franchise_id,SUM(gross_amount) sales_30d FROM pos_sales WHERE sold_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) GROUP BY franchise_id) s ON s.franchise_id=f.id
+   WHERE f.status<>'closed'
    GROUP BY COALESCE(NULLIF(op.division,''),'Unassigned'),COALESCE(NULLIF(f.district,''),'Unassigned'),COALESCE(NULLIF(f.upazila,''),'Unassigned')
    ORDER BY division,district,upazila")->fetchAll();
  $outlets=$pdo->query("SELECT f.id,f.code,f.name,COALESCE(NULLIF(op.division,''),'Unassigned') division,COALESCE(NULLIF(f.district,''),'Unassigned') district,COALESCE(NULLIF(f.upazila,''),'Unassigned') upazila,f.status,pl.stage pipeline_stage,
