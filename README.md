@@ -271,3 +271,32 @@ The harness uses temporary identities, one temporary outlet and one temporary se
 - automatic cleanup and residue verification
 
 For production safety, `settlement.generate` now accepts an optional `franchise_id` to generate only one outlet settlement; omitting it preserves the existing all-outlet behavior. `operations.alerts.refresh` likewise accepts an optional `franchise_id` for outlet-scoped refresh.
+
+
+## Operations Command Center V2 — Round 1
+
+Round 1 adds the Daily Operations Core to the existing Franchise & Retail Operations workspace:
+
+- Regional Command Center with Division → District → Upazila heat view, sales, alerts and overdue work.
+- Daily Outlet Check-in with opening/closing status, timestamps, evidence refs and manager note.
+- Field Visit Planner using the existing field-visit workflow and Operations/Regional assignees.
+- Contract & Renewal Control for franchise agreement, lease, trade/food/fire/tax documents and configurable reminder windows.
+- Contract-expiry alerts integrated into the existing Operations alert/notification engine.
+- Outlet Launch War Room with readiness score, blockers and one-click blocker task creation.
+- Existing Owner-only margin, finance, performance approval and final close boundaries remain unchanged.
+
+Production upgrade:
+
+`php server/upgrade-operations-v2-round1.php`
+
+Static/database verifier:
+
+`php server/verify-operations-v2-round1.php`
+
+Production-safe live E2E:
+
+`php server/e2e-operations-v2-round1.php`
+
+Expected final E2E gate:
+
+`OPERATIONS_V2_ROUND1_FINAL_GREEN`
