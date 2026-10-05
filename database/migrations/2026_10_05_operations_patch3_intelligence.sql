@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS outlet_sales_targets (
 CREATE TABLE IF NOT EXISTS outlet_inventory_policies (
  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
  franchise_id BIGINT UNSIGNED NOT NULL,
- product_pack_id BIGINT UNSIGNED NULL,
+ product_pack_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
  min_days_cover DECIMAL(8,2) NOT NULL DEFAULT 7,
  target_days_cover DECIMAL(8,2) NOT NULL DEFAULT 21,
  max_days_cover DECIMAL(8,2) NOT NULL DEFAULT 60,
